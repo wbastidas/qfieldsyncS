@@ -181,10 +181,9 @@ class GeoPackageWriterTest(unittest.TestCase):
         self.assertEqual(struct.unpack("<I", raw[1:5])[0], 5)
 
     def test_columna_reservada_se_rechaza(self):
-        with self.assertRaises(GeoPackageError):
-            with GeoPackageWriter(self.path) as gpkg:
-                srs = gpkg.add_srs(32717, "EPSG", "wkt")
-                gpkg.create_feature_table("X", [("fid", "TEXT")], "POINT", srs)
+        with self.assertRaises(GeoPackageError), GeoPackageWriter(self.path) as gpkg:
+            srs = gpkg.add_srs(32717, "EPSG", "wkt")
+            gpkg.create_feature_table("X", [("fid", "TEXT")], "POINT", srs)
 
     def test_sin_sistema_de_referencia_usa_el_indefinido(self):
         with GeoPackageWriter(self.path) as gpkg:

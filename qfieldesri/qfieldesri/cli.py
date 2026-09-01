@@ -13,6 +13,7 @@ Ejecutar con el Python de ArcGIS para tener arcpy::
 Subcomandos:
 
 ``analizar``      inventario de la geodatabase y verificacion previa
+``ambitos``       lista los alimentadores, subestaciones o parroquias elegibles
 ``configurar``    genera un archivo de configuracion editable
 ``empaquetar``    geodatabase -> carpeta de proyecto QField
 ``sincronizar``   carpeta de QField -> geodatabase
@@ -30,8 +31,9 @@ import sys
 from .core.checker import WorkspaceChecker
 from .core.config import LayerAction, PackagingConfig
 from .core.packager import Packager, load_manifest
+from .core.scope import Scope, ScopeKind, ScopeResolver
 from .core.synchronizer import ConflictPolicy, Synchronizer
-from .profiles import available_profiles
+from .profiles import available_profiles, load_profile
 from .readers import get_reader
 
 EXIT_OK = 0
@@ -123,6 +125,41 @@ def cmd_analizar(args):
         reader.close()
 
 
+def cmd_ambitos(args):
+    """Lista los valores elegibles de un ambito, leidos de la geodatabase."""
+    reader = _open_reader(args.gdb, args.motor)
+    try:
+        workspace = reader.describe_workspace()
+        profile = load_profile(args.perfil)
+        resolver = ScopeResolver(workspace, profile, reader)
+
+        if not args.ambito:
+            _out("Ambitos que este perfil sabe resolver:")
+            for kind in profile.supported_scopes():
+                _out("  %-14s %s" % (kind, ScopeKind.LABELS.get(kind, "")))
+            _out("  %-14s %s" % (ScopeKind.POLIGONO, "Poligono de sector"))
+            return EXIT_OK
+
+        values = resolver.available_values(
+            args.ambito, only_present_in=args.presentes_en
+        )
+        if not values:
+            _out(
+                "No hay valores para el ambito '%s'. Puede que la geodatabase "
+                "no tenga el dominio correspondiente." % args.ambito
+            )
+            return EXIT_OK
+        _out(
+            "%s (%d valores):"
+            % (ScopeKind.LABELS.get(args.ambito, args.ambito), len(values))
+        )
+        for code, label in values:
+            _out("  %-14s %s" % (code, label))
+        return EXIT_OK
+    finally:
+        reader.close()
+
+
 def cmd_configurar(args):
     # Aqui --salida es el archivo de configuracion, no una carpeta.
     destination = args.salida or "qfieldesri_config.json"
@@ -170,6 +207,9 @@ def cmd_empaquetar(args):
 
         result = Packager(reader, config, progress=_progress).run()
         _out("")
+        if result.scope_description:
+            _out(result.scope_description)
+            _out("")
         _out("Paquete: %s" % result.project_dir)
         _out("Proyecto: %s" % os.path.basename(result.project_file))
         for name in sorted(result.layer_counts):
@@ -276,11 +316,31 @@ def cmd_demo(args):
     result = Packager(reader, config, progress=_progress).run()
     _out("")
     _out("Paquete de demostracion en %s" % result.project_dir)
-    _out("Abra el .qgs con QGIS o copie la carpeta a QField para verlo.")
+    _out("Copie la carpeta al dispositivo y abra el proyecto desde QField.")
     return EXIT_OK
 
 
 # ----------------------------------------------------------------------
+def _scope_from_args(args):
+    """Arma el ambito de exportacion a partir de los argumentos."""
+    kind = getattr(args, "ambito", None)
+    if not kind:
+        return Scope()
+    if kind == ScopeKind.POLIGONO:
+        return Scope(
+            kind,
+            polygon_wkt=getattr(args, "poligono_wkt", None),
+            polygon_layer=getattr(args, "poligono", None),
+            polygon_where=getattr(args, "poligono_donde", None),
+            follow_relationships=not getattr(args, "sin_unidades", False),
+        )
+    return Scope(
+        kind,
+        values=getattr(args, "valores", None) or [],
+        follow_relationships=not getattr(args, "sin_unidades", False),
+    )
+
+
 def _config_from_args(args, workspace=None):
     config = PackagingConfig(
         workspace=getattr(args, "gdb", None) or "",
@@ -292,6 +352,7 @@ def _config_from_args(args, workspace=None):
         crs_code=getattr(args, "crs", None),
         include_related_tables=not getattr(args, "sin_tablas_relacionadas", False),
         big_domain_threshold=getattr(args, "umbral_dominio", 40),
+        scope=_scope_from_args(args),
     )
     solo = getattr(args, "solo", None)
     if solo and workspace is not None:
@@ -374,6 +435,23 @@ def build_parser():  # noqa: PLR0915
     analizar.add_argument("--json", help="Escribe el resultado en un archivo JSON")
     analizar.set_defaults(func=cmd_analizar)
 
+    ambitos = subparsers.add_parser(
+        "ambitos",
+        help="Lista los alimentadores, subestaciones o parroquias elegibles",
+    )
+    _add_common(ambitos, with_output=False)
+    ambitos.add_argument(
+        "--ambito",
+        choices=ScopeKind.ALL,
+        help="Ambito a listar; sin esto se listan los ambitos disponibles",
+    )
+    ambitos.add_argument(
+        "--presentes-en",
+        dest="presentes_en",
+        help="Devolver solo los valores que aparecen en esa clase",
+    )
+    ambitos.set_defaults(func=cmd_ambitos)
+
     configurar = subparsers.add_parser(
         "configurar", help="Genera un archivo de configuracion editable"
     )
@@ -401,7 +479,39 @@ def build_parser():  # noqa: PLR0915
     empaquetar.add_argument(
         "--foto", nargs="+", help="Campos de fotografia, p. ej. EstructuraSoporte:FOTO"
     )
-    empaquetar.add_argument("--area", help="Area de interes en WKT")
+    empaquetar.add_argument(
+        "--ambito",
+        choices=ScopeKind.ALL,
+        help="Acotar la exportacion por alimentador, subestacion, division "
+        "politica o poligono de sector",
+    )
+    empaquetar.add_argument(
+        "--valores",
+        nargs="+",
+        help="Codigos del ambito, p. ej. --ambito alimentador "
+        "--valores 04BH070T11 04SM320T22",
+    )
+    empaquetar.add_argument(
+        "--poligono", help="Clase de poligonos que delimita el sector"
+    )
+    empaquetar.add_argument(
+        "--poligono-donde",
+        dest="poligono_donde",
+        help="Clausula WHERE para elegir que poligonos del sector se usan",
+    )
+    empaquetar.add_argument(
+        "--poligono-wkt", dest="poligono_wkt", help="Poligono del sector en WKT"
+    )
+    empaquetar.add_argument(
+        "--sin-unidades",
+        dest="sin_unidades",
+        action="store_true",
+        help="No arrastrar las tablas Unidad de los Puestos exportados",
+    )
+    empaquetar.add_argument(
+        "--area",
+        help="Area de interes en WKT (equivale a --ambito poligono --poligono-wkt)",
+    )
     empaquetar.add_argument("--crs", type=int, help="Codigo EPSG de salida")
     empaquetar.add_argument(
         "--umbral-dominio",

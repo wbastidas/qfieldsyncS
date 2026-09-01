@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Pruebas del generador de proyectos QGIS."""
+"""Pruebas del generador del archivo de proyecto que abre QField."""
 
 import os
 import shutil
@@ -8,10 +8,10 @@ import unittest
 import xml.etree.ElementTree as ET
 
 from qfieldesri.core.model import SpatialReferenceInfo
-from qfieldesri.writers.qgis_project import (
+from qfieldesri.writers.qfield_project import (
     FieldSpec,
     LayerSpec,
-    QgisProjectWriter,
+    QFieldProjectWriter,
     RelationSpec,
     WidgetSpec,
 )
@@ -22,7 +22,7 @@ CRS = SpatialReferenceInfo(
 
 
 def build_writer():
-    writer = QgisProjectWriter(
+    writer = QFieldProjectWriter(
         "Proyecto de prueba",
         CRS,
         qfield_options={"initialMapMode": "digitize", "maximumImageWidthHeight": 1600},
@@ -84,7 +84,7 @@ def build_writer():
     return writer, poste, unidad
 
 
-class QgisProjectWriterTest(unittest.TestCase):
+class QFieldProjectWriterTest(unittest.TestCase):
     def setUp(self):
         self.writer, self.poste, self.unidad = build_writer()
         self.root = self.writer.build()

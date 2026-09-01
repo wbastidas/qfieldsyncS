@@ -78,7 +78,7 @@ class AttachmentsTest(unittest.TestCase):
         copied, missing = attachments.copy_to_repository(self._collect(), repository)
         self.assertEqual(len(copied), 1)
         self.assertEqual(len(missing), 1)
-        destination = list(copied.values())[0]
+        destination = next(iter(copied.values()))
         self.assertTrue(os.path.isfile(destination))
         self.assertIn("EstructuraSoporte", destination)
 

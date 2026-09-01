@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 """Cliente minimo de QFieldCloud, solo con la biblioteca estandar.
 
-QFieldSync habla con QFieldCloud a traves de ``QgsNetworkAccessManager``, que
-no existe fuera de QGIS. Aqui se reimplementa lo imprescindible sobre
-``urllib``, de modo que funcione tanto en el Python 2.7 de ArcMap como en el
-Python 3 de ArcGIS Pro sin instalar dependencias (en ArcGIS instalar paquetes
-suele requerir permisos de administrador).
+Se implementa lo imprescindible sobre ``urllib``, de modo que funcione tanto
+en el Python 2.7 de ArcMap como en el Python 3 de ArcGIS Pro sin instalar
+dependencias: en ArcGIS instalar paquetes suele requerir permisos de
+administrador, y aqui no hace falta ninguno.
 
 Cubre el camino completo para publicar un paquete desde ArcGIS:
 

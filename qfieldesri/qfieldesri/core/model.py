@@ -2,7 +2,8 @@
 
 Estas clases son el contrato entre los lectores (``qfieldesri.readers``) y los
 escritores (``qfieldesri.writers``). No dependen de arcpy, ni de GDAL, ni de
-QGIS: un lector rellena estos objetos y un escritor los consume. Gracias a eso
+QGIS: un lector rellena estos objetos y un escritor los consume, y ninguno de
+los dos necesita nada instalado ademas de ArcGIS. Gracias a eso
 el mismo empaquetador sirve para una File Geodatabase local y para una
 geodatabase corporativa (SDE) sin cambiar una linea del generador de salida,
 y las pruebas pueden usar un lector simulado.

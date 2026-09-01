@@ -442,6 +442,30 @@ class ArcpyReader(GeodatabaseReader):
                 arcpy.management.Delete(layer_name)
         return int(arcpy.management.GetCount(layer_info.path)[0])
 
+    def delimit_field(self, layer_info, name):
+        return arcpy.AddFieldDelimiters(layer_info.path, name)
+
+    def union_wkt(self, layer_name, where_clause=None):
+        """Une los poligonos elegidos en un solo WKT para el recorte."""
+        path = layer_name
+        layer = None
+        if not arcpy.Exists(path):
+            layer = self._describe_cache.get(layer_name)
+            path = layer.catalogPath if layer is not None else layer_name
+        description = arcpy.Describe(path)
+        spatial_reference = getattr(description, "spatialReference", None)
+
+        union = None
+        with arcpy.da.SearchCursor(path, ["SHAPE@"], where_clause or None) as cursor:
+            for (geometry,) in cursor:
+                if geometry is None:
+                    continue
+                union = geometry if union is None else union.union(geometry)
+        if union is None:
+            return None, None
+        code = getattr(spatial_reference, "factoryCode", None) or None
+        return union.WKT, code
+
     # ------------------------------------------------------------------
     # escritura (sincronizacion de vuelta)
     # ------------------------------------------------------------------

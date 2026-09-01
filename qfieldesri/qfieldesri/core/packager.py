@@ -2,11 +2,11 @@
 """Empaquetado de una geodatabase de ESRI a un proyecto de QField.
 
 Es el equivalente de ``libqfieldsync.offline_converter.OfflineConverter``, pero
-partiendo de la geodatabase en vez de un proyecto QGIS ya montado. El resultado
+partiendo de la geodatabase, que aqui es la unica fuente. El resultado
 es una carpeta autocontenida que se copia tal cual al dispositivo::
 
     <salida>/<proyecto>/
-        <proyecto>.qgs          proyecto QGIS que abre QField
+        <proyecto>.qgs          archivo de proyecto que abre QField
         data.gpkg               todos los datos, un GeoPackage
         DCIM/ audio/ video/ files/   adjuntos capturados en campo
         qfieldesri_manifest.json     como volver a la geodatabase
@@ -26,10 +26,10 @@ from ..profiles import FORM_GROUP_ORDER, load_profile
 from ..utils import wkb as wkb_utils
 from ..utils.checksum import feature_checksum
 from ..writers.geopackage import GeoPackageWriter, adapt_value, esri_type_to_gpkg
-from ..writers.qgis_project import (
+from ..writers.qfield_project import (
     FieldSpec,
     LayerSpec,
-    QgisProjectWriter,
+    QFieldProjectWriter,
     RelationSpec,
     WidgetSpec,
 )
@@ -39,6 +39,7 @@ from .model import (
     DomainInfo,
     SpatialReferenceInfo,
 )
+from .scope import LayerFilter, ScopeResolver, combine
 
 MANIFEST_NAME = "qfieldesri_manifest.json"
 MANIFEST_VERSION = 1
@@ -54,7 +55,7 @@ BASELINE_COLUMNS = (
     ("checksum", "TEXT NOT NULL"),
 )
 
-#: Geometria de ESRI -> (tipo GeoPackage, geometria QGIS, wkbType QGIS, multiparte)
+#: Geometria de ESRI -> (tipo GeoPackage, geometria, wkbType, multiparte)
 GEOMETRY_MAP = {
     "Point": ("POINT", "Point", "Point", False),
     "Multipoint": ("MULTIPOINT", "Point", "MultiPoint", True),
@@ -85,6 +86,8 @@ class PackagingResult(object):
         self.manifest = manifest
         self.warnings = []
         self.layer_counts = {}
+        #: explicacion legible de como se acoto la exportacion
+        self.scope_description = ""
 
     @property
     def total_features(self):
@@ -108,8 +111,13 @@ class Packager(object):
         #: ``callable(mensaje, porcentaje)`` para el Toolbox o la consola
         self.progress = progress or (lambda message, percent=None: None)
         self.workspace = None
+        #: plan de ambito resuelto (que filtro le toca a cada clase)
+        self.scope_plan = None
         self._catalog_tables = {}
         self._domain_cache = {}
+        #: claves recogidas de los Puestos, para filtrar despues sus Unidades
+        self._parent_keys = {}
+        self._needed_parent_keys = {}
 
     # ------------------------------------------------------------------
     def run(self):
@@ -130,11 +138,13 @@ class Packager(object):
                 "configuracion o el filtro de capas."
             )
 
+        layers = self._apply_scope(layers)
+
         crs = self._project_crs(layers)
         manifest = self._new_manifest(crs)
         result = PackagingResult(project_dir, project_path, gpkg_path, manifest)
 
-        project = QgisProjectWriter(
+        project = QFieldProjectWriter(
             title=self.config.title,
             crs=crs,
             datasource="./data.gpkg",
@@ -162,10 +172,12 @@ class Packager(object):
 
         self._add_relations(project, layers, manifest)
 
-        self.progress("Escribiendo el proyecto QGIS", 95)
+        self.progress("Escribiendo el proyecto de QField", 95)
         project.write(project_path)
         self._write_attachment_dirs(project_dir)
         self._write_manifest(project_dir, manifest)
+        if self.scope_plan is not None and not self.scope_plan.is_empty:
+            result.scope_description = self.scope_plan.describe()
         self.progress("Empaquetado terminado", 100)
         return result
 
@@ -201,6 +213,59 @@ class Packager(object):
             )
         )
         return selected
+
+    def _apply_scope(self, layers):
+        """Resuelve el ambito y ordena las clases para poder aplicarlo.
+
+        Las clases que heredan el filtro de su Puesto tienen que empaquetarse
+        **despues** que el Puesto, porque su filtro son las claves de los
+        registros que de verdad se exportaron.
+        """
+        resolver = ScopeResolver(self.workspace, self.profile, self.reader)
+        self.scope_plan = resolver.resolve(self.config.scope, layers)
+
+        if self.scope_plan.is_empty:
+            return layers
+
+        if self.config.scope.is_spatial and not self.config.area_of_interest:
+            self.config.area_of_interest = self.scope_plan.aoi_wkt
+            self.config.area_of_interest_crs = self.scope_plan.aoi_crs
+
+        self._needed_parent_keys = {}
+        for layer_filter in self.scope_plan.filters.values():
+            if layer_filter.method == LayerFilter.BY_RELATIONSHIP:
+                self._needed_parent_keys.setdefault(layer_filter.parent, set()).add(
+                    layer_filter.parent_field
+                )
+
+        for line in self.scope_plan.describe().splitlines():
+            self.progress(line)
+        return self._order_parents_first(layers)
+
+    def _order_parents_first(self, layers):
+        """Coloca cada Puesto antes que las Unidades que dependen de el."""
+        by_name = dict((layer.name, layer) for layer in layers)
+        ordered = []
+        placed = set()
+
+        def place(layer, seen):
+            if layer.name in placed or layer.name in seen:
+                return
+            seen.add(layer.name)
+            layer_filter = self.scope_plan.filter_for(layer.name)
+            if (
+                layer_filter is not None
+                and layer_filter.method == LayerFilter.BY_RELATIONSHIP
+                and layer_filter.parent in by_name
+            ):
+                place(by_name[layer_filter.parent], seen)
+            if layer.name not in placed:
+                ordered.append(layer)
+                placed.add(layer.name)
+
+        for layer in layers:
+            place(layer, set())
+        return ordered
 
     def _add_related_tables(self, selected):
         """Arrastra las tablas ``Unidad`` de los ``Puesto`` seleccionados.
@@ -363,6 +428,44 @@ class Packager(object):
             fields.append(field)
         return fields
 
+    def _where_clauses_for(self, layer_info, config):
+        """Clausulas a recorrer para una clase: filtro del usuario + ambito.
+
+        Se devuelve una lista porque una clausula ``IN`` con miles de valores
+        no la admite ningun motor: se trocea y se recorre la clase una vez por
+        trozo.
+        """
+        base = config.where_clause or None
+        layer_filter = (
+            self.scope_plan.filter_for(layer_info.name)
+            if self.scope_plan is not None
+            else None
+        )
+        if layer_filter is None:
+            return [base]
+
+        if layer_filter.method == LayerFilter.BY_RELATIONSHIP:
+            # El filtro de una Unidad son las claves de los Puestos que de
+            # verdad se exportaron, recogidas al empaquetar el Puesto.
+            values = sorted(
+                self._parent_keys.get(
+                    (layer_filter.parent, layer_filter.parent_field), set()
+                )
+            )
+            layer_filter = LayerFilter(
+                layer_filter.layer,
+                LayerFilter.BY_ATTRIBUTE,
+                field=layer_filter.field,
+                values=values,
+            )
+
+        clauses = layer_filter.where_clauses(
+            delimit=lambda name: self.reader.delimit_field(layer_info, name)
+        )
+        if not clauses:
+            return [base]
+        return [combine(base, clause) for clause in clauses]
+
     def _copy_features(self, gpkg, table, layer_info, exported, config, writable):
         field_names = [field.name for field in exported]
         key_field = self._key_field(layer_info)
@@ -371,34 +474,45 @@ class Packager(object):
             and GEOMETRY_MAP.get(layer_info.geometry_type, (None, None, None, False))[3]
         )
 
+        collect = self._needed_parent_keys.get(layer_info.name, ())
+
         count = 0
         baseline = []
-        for wkb, attributes in self.reader.iter_features(
-            layer_info,
-            field_names,
-            where_clause=config.where_clause or None,
-            aoi_wkt=self.config.area_of_interest,
-            aoi_crs=self.config.area_of_interest_crs,
-            limit=config.max_features,
-        ):
-            fid = gpkg.insert(table, attributes, wkb=wkb)
-            baseline.append(
-                (
-                    table,
-                    fid,
-                    _text(attributes.get(key_field)),
-                    self._checksum(attributes, writable, wkb, promote),
+        for where_clause in self._where_clauses_for(layer_info, config):
+            for wkb, attributes in self.reader.iter_features(
+                layer_info,
+                field_names,
+                where_clause=where_clause,
+                aoi_wkt=self.config.area_of_interest,
+                aoi_crs=self.config.area_of_interest_crs,
+                limit=config.max_features,
+            ):
+                fid = gpkg.insert(table, attributes, wkb=wkb)
+                baseline.append(
+                    (
+                        table,
+                        fid,
+                        _text(attributes.get(key_field)),
+                        self._checksum(attributes, writable, wkb, promote),
+                    )
                 )
-            )
-            count += 1
-            if len(baseline) >= 5000:
-                gpkg.insert_private(
-                    BASELINE_TABLE,
-                    [column for column, _kind in BASELINE_COLUMNS],
-                    baseline,
-                )
-                baseline = []
-                self.progress("  %s: %d entidades" % (layer_info.name, count))
+                for parent_field in collect:
+                    value = attributes.get(parent_field)
+                    if value not in (None, ""):
+                        self._parent_keys.setdefault(
+                            (layer_info.name, parent_field), set()
+                        ).add(value)
+                count += 1
+                if len(baseline) >= 5000:
+                    gpkg.insert_private(
+                        BASELINE_TABLE,
+                        [column for column, _kind in BASELINE_COLUMNS],
+                        baseline,
+                    )
+                    baseline = []
+                    self.progress("  %s: %d entidades" % (layer_info.name, count))
+            if config.max_features and count >= config.max_features:
+                break
         gpkg.flush(table)
         if baseline:
             gpkg.insert_private(
@@ -658,7 +772,7 @@ class Packager(object):
         return union
 
     def _default_expression(self, layer_info, field):
-        """Valor por defecto del subtipo por defecto, como expresion QGIS."""
+        """Valor por defecto del subtipo por defecto, como expresion del formulario."""
         value = field.default_value
         for subtype in layer_info.subtypes:
             if subtype.is_default and field.name in subtype.defaults:
@@ -853,6 +967,7 @@ class Packager(object):
             "project_name": self.config.project_name,
             "crs": crs.code,
             "area_of_interest": self.config.area_of_interest,
+            "scope": self.config.scope.to_dict(),
             "layers": [],
             "relations": [],
         }

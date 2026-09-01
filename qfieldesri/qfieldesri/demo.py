@@ -5,7 +5,7 @@ Reproduce un fragmento representativo del modelo electrico de CNEL EP —un
 tramo de media tension, su poste, el puesto de transformacion y la unidad
 relacionada— con dominios, subtipos y una relationship class. Sirve para:
 
-* probar qfieldESRI de punta a punta sin ArcGIS ni QGIS instalados;
+* probar qfieldESRI de punta a punta sin ArcGIS instalado;
 * que quien vaya a usar el complemento vea el resultado antes de conectar la
   geodatabase real;
 * alimentar las pruebas automatizadas.
@@ -63,6 +63,13 @@ def _system_fields():
     ]
 
 
+def _feeder_field():
+    """Campo de alimentador, presente en casi todas las clases de red."""
+    return FieldInfo(
+        "ALIMENTADORID", "String", "Alim1", 10, domain="Codigo Alimentador"
+    )
+
+
 def build_workspace():
     """Devuelve el :class:`WorkspaceInfo` de la demostracion."""
     domains = {
@@ -96,6 +103,24 @@ def build_workspace():
             range_min=6.0,
             range_max=20.0,
         ),
+        # Dominios de ambito: los codigos de la red fisica de la Unidad de
+        # Negocio. Se leen siempre de la geodatabase, nunca de una lista fija.
+        "Codigo Alimentador": DomainInfo(
+            "Codigo Alimentador",
+            coded_values=[
+                ("04BH070T11", "S/E BELO HORIZONTE - PORTAL AL SOL"),
+                ("04SM320T22", "S/E SAMANES - LOS ALAMOS"),
+                ("04OR240T22", "S/E ORQUIDEAS - LIMONCOCHA"),
+            ],
+        ),
+        "Subestacion": DomainInfo(
+            "Subestacion",
+            coded_values=[
+                ("04BH07", "S/E BELO HORIZONTE"),
+                ("04SM32", "S/E SAMANES"),
+                ("04OR24", "S/E ORQUIDEAS"),
+            ],
+        ),
         # Dominio grande: se publica como tabla de catalogo + ValueRelation.
         "Catalogo Conductores": DomainInfo(
             "Catalogo Conductores",
@@ -116,6 +141,7 @@ def build_workspace():
         globalid_field="GLOBALID",
         fields=_system_fields()
         + [
+            _feeder_field(),
             FieldInfo(
                 "CODIGOESTRUCTURA", "String", "Codigo Estructura", 20, nullable=False
             ),
@@ -136,6 +162,7 @@ def build_workspace():
         subtype_field="SUBTIPO",
         fields=_system_fields()
         + [
+            _feeder_field(),
             FieldInfo("SUBTIPO", "Integer", "Subtipo", default_value=1),
             FieldInfo(
                 "FASECONEXION", "Integer", "Fase", domain="Fase Conexion Trifasica"
@@ -184,6 +211,7 @@ def build_workspace():
         globalid_field="GLOBALID",
         fields=_system_fields()
         + [
+            _feeder_field(),
             FieldInfo("CODIGOPUESTO", "String", "Codigo Puesto", 20, nullable=False),
             FieldInfo("POTENCIATOTAL", "Double", "Potencia Total (kVA)"),
             FieldInfo(
@@ -207,6 +235,28 @@ def build_workspace():
         ],
     )
 
+    circuito = LayerInfo(
+        name="CIRCUITOFUENTE",
+        dataset_type=LayerInfo.TABLE,
+        path="CIRCUITOFUENTE",
+        alias="Alimentador Cabecera",
+        globalid_field="GLOBALID",
+        fields=_system_fields()
+        + [
+            FieldInfo(
+                "CODIGOALIMENTADOR",
+                "String",
+                "Codigo Alimentador",
+                10,
+                domain="Codigo Alimentador",
+            ),
+            FieldInfo(
+                "IDSUBESTACION", "String", "Subestacion", 10, domain="Subestacion"
+            ),
+            FieldInfo("VOLTAJENOMINAL", "Double", "Voltaje Nominal"),
+        ],
+    )
+
     relationships = [
         RelationshipInfo(
             name="PuestoTransfDist_UnidadTransfDist",
@@ -222,11 +272,22 @@ def build_workspace():
     return WorkspaceInfo(
         path="demo.gdb",
         workspace_type=WorkspaceInfo.FILE_GDB,
-        layers=[poste, tramo, puesto, unidad],
+        layers=[poste, tramo, puesto, unidad, circuito],
         domains=domains,
         relationships=relationships,
         feature_datasets=["Electrico"],
     )
+
+
+#: Alimentadores de la demostracion, en el orden del dominio.
+FEEDERS = ("04BH070T11", "04SM320T22", "04OR240T22")
+
+#: Subestacion de la que cuelga cada alimentador (lo que guarda CIRCUITOFUENTE).
+FEEDER_SUBSTATION = {
+    "04BH070T11": "04BH07",
+    "04SM320T22": "04SM32",
+    "04OR240T22": "04OR24",
+}
 
 
 def _point(x, y):
@@ -254,6 +315,7 @@ def build_reader():
                 {
                     "OBJECTID": index + 1,
                     "GLOBALID": "{P%08d-0000-0000-0000-000000000000}" % index,
+                    "ALIMENTADORID": FEEDERS[index % len(FEEDERS)],
                     "CODIGOESTRUCTURA": "GYE-P-%04d" % (index + 1),
                     "ALTURA": 9.0 + index % 3,
                     "MATERIAL": "HORMIGON",
@@ -276,6 +338,7 @@ def build_reader():
                 {
                     "OBJECTID": 1,
                     "GLOBALID": "{T0000001-0000-0000-0000-000000000000}",
+                    "ALIMENTADORID": FEEDERS[0],
                     "SUBTIPO": 1,
                     "FASECONEXION": 7,
                     "VOLTAJE": 1,
@@ -300,6 +363,7 @@ def build_reader():
                 {
                     "OBJECTID": 1,
                     "GLOBALID": "{U0000001-0000-0000-0000-000000000000}",
+                    "ALIMENTADORID": FEEDERS[0],
                     "CODIGOPUESTO": "GYE-PT-0001",
                     "POTENCIATOTAL": 75.0,
                     "CIRCUITSOURCEGUID": None,
@@ -333,6 +397,28 @@ def build_reader():
                 },
             )
             for index in range(3)
+        ],
+    )
+
+    reader.set_features(
+        "CIRCUITOFUENTE",
+        [
+            (
+                None,
+                {
+                    "OBJECTID": index + 1,
+                    "GLOBALID": "{C000000%d-0000-0000-0000-000000000000}" % index,
+                    "CODIGOALIMENTADOR": feeder,
+                    "IDSUBESTACION": FEEDER_SUBSTATION[feeder],
+                    "VOLTAJENOMINAL": 13.8,
+                    "PROVINCIA": "09",
+                    "CANTON": "0901",
+                    "USUARIOREGISTRO": "demo",
+                    "FECHAREGISTRO": None,
+                    "OBSERVACIONES": None,
+                },
+            )
+            for index, feeder in enumerate(FEEDERS)
         ],
     )
     return reader

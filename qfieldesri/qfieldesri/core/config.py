@@ -1,9 +1,8 @@
 """Configuracion de empaquetado de qfieldESRI.
 
 Es el equivalente de ``SyncAction`` + ``ProjectConfig`` de QFieldSync, pero
-guardado en un JSON propio en vez de en las propiedades de un proyecto QGIS
-(que aqui no existe todavia: lo generamos nosotros). Ese JSON es lo que
-comparten el Python Toolbox de ArcGIS y la linea de comandos, y es tambien lo
+guardado en un JSON propio. Ese JSON es lo que comparten la aplicacion de
+escritorio, el Python Toolbox de ArcGIS y la linea de comandos, y es tambien lo
 que permite repetir un empaquetado identico mes a mes.
 """
 
@@ -16,6 +15,7 @@ from .model import (
     CATEGORY_OTHER,
     CATEGORY_SYSTEM,
 )
+from .scope import Scope
 
 
 class LayerAction(object):
@@ -156,6 +156,7 @@ class PackagingConfig(object):
         crs_code=None,
         spatial_index=True,
         connection_note="",
+        scope=None,
     ):
         #: ruta de la File Geodatabase (.gdb) o del ``.sde`` corporativo
         self.workspace = workspace
@@ -188,6 +189,9 @@ class PackagingConfig(object):
         self.spatial_index = spatial_index
         #: nota libre que se guarda en el manifiesto (p. ej. version SDE)
         self.connection_note = connection_note
+        #: ambito de exportacion (alimentador, subestacion, poligono...).
+        #: Es lo que decide que subconjunto de la red viaja al dispositivo.
+        self.scope = scope if isinstance(scope, Scope) else Scope.from_dict(scope)
 
     # ------------------------------------------------------------------
     def layer_config(self, name):
@@ -224,6 +228,7 @@ class PackagingConfig(object):
             "crs_code": self.crs_code,
             "spatial_index": self.spatial_index,
             "connection_note": self.connection_note,
+            "scope": self.scope.to_dict(),
         }
 
     @classmethod

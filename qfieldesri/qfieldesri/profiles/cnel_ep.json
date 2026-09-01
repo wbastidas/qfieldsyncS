@@ -8599,6 +8599,42 @@
    "origin": "Subestacion"
   }
  ],
+ "scope_domains": {
+  "alimentador": "Codigo Alimentador",
+  "canton": "Cantones",
+  "parroquia": "Parroquias",
+  "provincia": "Provincias",
+  "subestacion": "Subestacion"
+ },
+ "scope_fields": {
+  "alimentador": [
+   "ALIMENTADORID",
+   "ALIMENTADOR",
+   "ALIMENTADORID2",
+   "CODIGOALIMENTADOR"
+  ],
+  "canton": [
+   "CANTON"
+  ],
+  "parroquia": [
+   "PARROQUIA"
+  ],
+  "provincia": [
+   "PROVINCIA"
+  ],
+  "subestacion": [
+   "IDSUBESTACION",
+   "NUMEROSUBESTACION"
+  ]
+ },
+ "scope_indirect": {
+  "subestacion": {
+   "key_field": "IDSUBESTACION",
+   "table": "CIRCUITOFUENTE",
+   "target_kind": "alimentador",
+   "value_field": "CODIGOALIMENTADOR"
+  }
+ },
  "sink_classes": [
   "PuntoCarga",
   "Luminaria"

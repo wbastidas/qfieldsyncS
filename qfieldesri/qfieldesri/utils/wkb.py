@@ -1,6 +1,6 @@
 """Lectura y normalizacion de geometrias WKB.
 
-Este modulo es deliberadamente independiente de arcpy, GDAL y QGIS: solo usa la
+Este modulo es deliberadamente independiente de arcpy y de GDAL: solo usa la
 biblioteca estandar. Sirve para tres cosas dentro de qfieldESRI:
 
 * normalizar el WKB que entrega ``arcpy.Geometry.WKB`` (que usa la convencion
@@ -10,7 +10,7 @@ biblioteca estandar. Sirve para tres cosas dentro de qfieldESRI:
   ``gpkg_contents`` sin depender de una libreria espacial;
 * averiguar el tipo de geometria de una capa a partir de un registro real.
 
-Compatible con Python 2.7 (ArcMap) y Python 3.x (ArcGIS Pro / QGIS).
+Compatible con Python 2.7 (ArcMap) y Python 3.x (ArcGIS Pro).
 """
 
 import struct
@@ -228,7 +228,7 @@ def analyze(data):
 
 
 def multi_type_of(base):
-    """Tipo multiparte equivalente. GeoPackage/QGIS prefieren capas homogeneas
+    """Tipo multiparte equivalente. GeoPackage exige capas homogeneas
     y las clases de ESRI admiten multiparte en cualquier feature class.
     """
     return {

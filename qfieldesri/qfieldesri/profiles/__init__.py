@@ -92,6 +92,17 @@ FORM_GROUP_ORDER = (
 #: ultimo valor a lo largo de una jornada de campo.
 LOCATION_FIELDS = ("PROVINCIA", "CANTON", "PARROQUIA", "CODIGOEMPRESA")
 
+#: Campos con los que se acota la exportacion cuando el perfil no dice otra
+#: cosa. Sirven tal cual para el perfil generico y para cualquier geodatabase
+#: que siga la nomenclatura del modelo nacional.
+DEFAULT_SCOPE_FIELDS = {
+    "alimentador": ["ALIMENTADORID", "ALIMENTADOR"],
+    "subestacion": ["IDSUBESTACION", "NUMEROSUBESTACION"],
+    "provincia": ["PROVINCIA"],
+    "canton": ["CANTON"],
+    "parroquia": ["PARROQUIA"],
+}
+
 
 class Profile(object):
     """Perfil de modelo de datos."""
@@ -112,6 +123,9 @@ class Profile(object):
         self.variable_domains = data.get("variable_domains", [])
         self.classes = data.get("classes", {})
         self.relationships = data.get("relationships", [])
+        self._scope_fields = data.get("scope_fields") or DEFAULT_SCOPE_FIELDS
+        self._scope_domains = data.get("scope_domains") or {}
+        self._scope_indirect = data.get("scope_indirect") or {}
         self._lower_classes = dict((name.lower(), name) for name in self.classes)
 
     # ------------------------------------------------------------------
@@ -208,6 +222,24 @@ class Profile(object):
 
     def documented_relationships(self):
         return self.relationships
+
+    # -- ambitos de exportacion -----------------------------------------
+    def scope_fields(self, kind):
+        """Campos candidatos para acotar por ese ambito, en orden."""
+        return list(self._scope_fields.get(kind, []))
+
+    def scope_domain(self, kind):
+        """Dominio del que se leen los valores elegibles, o ``None``."""
+        return self._scope_domains.get(kind)
+
+    def scope_indirect(self, kind):
+        """Como traducir un ambito que no es un campo de las clases de red."""
+        return self._scope_indirect.get(kind)
+
+    def supported_scopes(self):
+        """Ambitos que este perfil sabe resolver."""
+        kinds = set(self._scope_fields) | set(self._scope_indirect)
+        return sorted(kinds)
 
     def __repr__(self):  # pragma: no cover
         return "<Profile %s (%d clases)>" % (self.id, len(self.classes))

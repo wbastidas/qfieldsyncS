@@ -69,6 +69,23 @@ class GeodatabaseReader(object):
     def count_features(self, layer_info, where_clause=None):
         raise NotImplementedError
 
+    def delimit_field(self, layer_info, name):
+        """Cita el nombre de un campo como lo espera el motor de la fuente.
+
+        Una File Geodatabase usa comillas dobles y una geodatabase corporativa
+        depende del gestor; arcpy lo resuelve con ``AddFieldDelimiters``.
+        """
+        return name
+
+    def union_wkt(self, layer_name, where_clause=None):
+        """Une las entidades de una clase de poligonos en un unico WKT.
+
+        Es lo que convierte "el poligono del sector" que elige el usuario en el
+        area de interes que se aplica al recorte. Devuelve ``(wkt, codigo_epsg)``
+        o ``(None, None)`` si el motor no sabe hacerlo.
+        """
+        return None, None
+
     # -- escritura (sincronizacion de vuelta) ---------------------------
     def start_editing(self):
         """Abre una sesion de edicion (obligatoria en SDE versionado)."""

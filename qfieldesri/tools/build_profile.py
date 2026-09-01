@@ -71,7 +71,7 @@ def category_of(cell):
     return "otro"
 
 
-def parse_class_file(path, filename):
+def parse_class_file(path, filename):  # noqa: PLR0912
     """Devuelve ``{nombre_clase: definicion}`` de un archivo de clases."""
     with io.open(path, "r", encoding="utf-8") as handle:
         lines = handle.read().splitlines()
@@ -304,6 +304,42 @@ def build():
         ],
         "sink_classes": ["PuntoCarga", "Luminaria"],
         "variable_domains": ["Codigo Alimentador", "Numero Estacion", "Subestacion"],
+        # --- ambitos de exportacion -----------------------------------
+        # Campos con los que se acota la exportacion, en orden de
+        # preferencia: se usa el primero que exista en cada clase. Los
+        # recuentos son sobre las 47 clases del catalogo.
+        "scope_fields": {
+            "alimentador": [
+                "ALIMENTADORID",
+                "ALIMENTADOR",
+                "ALIMENTADORID2",
+                "CODIGOALIMENTADOR",
+            ],
+            "subestacion": ["IDSUBESTACION", "NUMEROSUBESTACION"],
+            "provincia": ["PROVINCIA"],
+            "canton": ["CANTON"],
+            "parroquia": ["PARROQUIA"],
+        },
+        # Dominio del que se leen los valores elegibles de cada ambito. Los
+        # valores NO se guardan aqui: cambian por Unidad de Negocio y se leen
+        # de la geodatabase activa.
+        "scope_domains": {
+            "alimentador": "Codigo Alimentador",
+            "subestacion": "Subestacion",
+            "provincia": "Provincias",
+            "canton": "Cantones",
+            "parroquia": "Parroquias",
+        },
+        # La subestacion no es un campo de las clases de red: se traduce a sus
+        # alimentadores con la tabla de alimentador cabecera.
+        "scope_indirect": {
+            "subestacion": {
+                "table": "CIRCUITOFUENTE",
+                "key_field": "IDSUBESTACION",
+                "value_field": "CODIGOALIMENTADOR",
+                "target_kind": "alimentador",
+            }
+        },
         "classes": classes,
         "relationships": relationships,
     }

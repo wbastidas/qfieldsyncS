@@ -6,7 +6,7 @@ Estructura del paquete::
     core/       modelo de metadatos, configuracion, empaquetado, verificacion,
                 sincronizacion de vuelta, adjuntos y cliente de QFieldCloud
     readers/    lectura de la geodatabase (arcpy, OGR, memoria)
-    writers/    escritura del GeoPackage y del proyecto QGIS que abre QField
+    writers/    escritura del GeoPackage y del proyecto que abre QField
     profiles/   curaduria del modelo de datos (CNEL EP o generico)
     utils/      WKB, huellas de entidad y utilidades de SQLite/GeoPackage
 

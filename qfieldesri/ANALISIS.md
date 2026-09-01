@@ -1,298 +1,321 @@
-# Análisis: de QFieldSync (QGIS) a qfieldESRI (ArcGIS Desktop)
+# Análisis y decisiones de diseño de qfieldESRI
 
-Este documento explica **qué hace QFieldSync**, **qué de eso sirve tal cual**,
-**qué no puede sobrevivir al cambio de plataforma** y **cómo se resolvió cada
-pieza** en qfieldESRI, el complemento nuevo que lleva una geodatabase de ESRI a
-QField y devuelve lo capturado en campo.
+Este documento explica **por qué qfieldESRI está construido como está**: qué
+problema resuelve, por qué es un programa externo y no un complemento, qué
+había que escribir desde cero y qué se decidió dejar fuera.
 
 ---
 
-## 1. Qué es QFieldSync y de qué está hecho
+## 1. El problema
 
-QFieldSync es un complemento de **QGIS**. Su punto de partida es un proyecto
-QGIS ya montado por el usuario, y su trabajo es *transformarlo* para que
-funcione en un dispositivo móvil:
+Hay una geodatabase de ESRI con el modelo eléctrico homologado de CNEL EP, se
+trabaja con **ArcGIS Desktop**, y hace falta que las brigadas salgan a campo con
+**QField** y que lo que capturen vuelva a la geodatabase.
 
-| Módulo de QFieldSync | Qué hace |
-|---|---|
-| `libqfieldsync.offline_converter` | Copia las capas a un GeoPackage y reescribe el proyecto para que apunte a él |
-| `libqfieldsync.layer.LayerSource` | Acción por capa (copiar / offline / no tocar / quitar) y opciones de QField, guardadas como propiedades `QFieldSync/*` de la capa |
-| `libqfieldsync.project.ProjectConfig` | Opciones del proyecto (mapa base, modo inicial, tamaño de foto…), guardadas en el grupo `qfieldsync` de las propiedades del proyecto |
-| `libqfieldsync.project_checker` | Verificación previa: avisa de rutas absolutas, capas inválidas, nombres conflictivos… |
-| `qfieldsync.core.cloud_api` / `cloud_transferrer` | Cliente de QFieldCloud sobre `QgsNetworkAccessManager` |
-| `qfieldsync.gui.*` | Diálogos Qt integrados en el menú de QGIS |
+Las dos orillas no se hablan:
 
-La dependencia crítica es que **todo se apoya en la API de QGIS**: `QgsProject`,
-`QgsVectorLayer`, `QgsNetworkAccessManager`, PyQt. Nada de eso existe dentro de
-ArcGIS Desktop.
+| | Origen | Destino |
+|---|---|---|
+| **Qué es** | File Geodatabase o geodatabase corporativa (SDE) | QField, aplicación móvil |
+| **Qué entiende** | `arcpy`, dominios, subtipos, relationship classes, red geométrica | un archivo de proyecto y un GeoPackage |
+| **Dónde vive** | Windows, con ArcGIS instalado | Android / iOS / escritorio |
 
-## 2. El otro extremo: qué hay en ArcGIS y en el modelo de datos
+## 2. Restricción de partida: nada de QGIS
 
-El origen no es un proyecto, es una **geodatabase** —File Geodatabase hoy,
-geodatabase corporativa (SDE) mañana— con el modelo eléctrico homologado de
-CNEL EP descrito en `docs/modelo/`:
+QField guarda su proyecto en un XML con extensión `.qgs`. Es tentador concluir
+que hace falta QGIS; **no es así**. `.qgs` es un formato de archivo, y un
+formato de archivo se escribe con un escritor de XML.
 
-- 47 clases (28 clases de entidad + 19 tablas) en los feature datasets
-  `Electrico` y `Electrico_Complementos`, en **EPSG:32717**;
-- **196 dominios**, algunos enormes (`UP_TRF_TODOS` tiene 1853 miembros) y tres
-  de ellos —`Codigo Alimentador`, `Numero Estacion`, `Subestacion`— **distintos
-  en cada Unidad de Negocio**;
-- **subtipos** que cambian el dominio del mismo campo (`VOLTAJE` en `Barra` usa
-  *Voltaje BT*, *MT* o *AT* según el subtipo);
-- **79 relationship classes**, que materializan el patrón **Puesto / Unidad**
-  del manual `MN-TEC-OPE-100`: el Puesto es el punto en el mapa, las Unidades
-  son las filas de atributos constructivos que cuelgan de él;
-- una **red geométrica** `Electrico_RedGeom` con 7 clases *edge* y 13
-  *junction*, y la conectividad `CircuitSourceGUID` ↔ `ParentCircuitSourceGUID`
-  que mantienen los auto-actualizadores de ArcFM.
+qfieldESRI escribe ese archivo con `xml.etree` de la biblioteca estándar. No
+importa QGIS, no lo instala y no lo necesita en ningún equipo. Lo mismo con la
+interfaz: nada de Qt ni PyQt; la ventana está hecha con **Tkinter**, que ya
+viene en el Python que instala ArcGIS.
 
-QField, en cambio, solo sabe abrir **un proyecto QGIS con capas OGR**. Ese es el
-hueco que qfieldESRI tiene que cubrir.
+Esto no queda en una promesa del README. `tests/test_dependencias.py` recorre
+todos los archivos del proyecto en cada ejecución de la batería y falla si
+aparece una sola importación de `qgis`, `PyQt`, `PySide`, `libqfieldsync` o
+cualquier dependencia externa no declarada. Las dos únicas externas admitidas
+son:
 
-## 3. Decisión de fondo: no portar, reconstruir el eje
+| Dependencia | Dónde puede aparecer | Por qué |
+|---|---|---|
+| `arcpy` | su lector, el lanzador, la caja de herramientas, y de forma perezosa en la aplicación y en los adjuntos | es la única forma de hablar con la geodatabase |
+| `osgeo` | solo su lector | respaldo opcional para leer sin ArcGIS |
 
-Portar QFieldSync módulo a módulo es imposible: su núcleo *es* la API de QGIS.
-Pero su **arquitectura** sí se reutiliza, y es lo valioso:
+La misma prueba comprueba lo contrario de lo obvio: que **todo el núcleo se
+importe sin arcpy instalado**. Eso es lo que permite probar y automatizar el
+programa fuera de ArcGIS, y es la razón de que las 213 pruebas corran en
+cualquier Python.
+
+## 3. Programa externo, no complemento
+
+Se descartó empotrarlo en ArcGIS como única vía:
+
+- un complemento de ArcMap obliga a registrar componentes y a pelearse con
+  permisos de administrador en cada equipo;
+- el usuario tendría que abrir ArcGIS —lento y con licencia ocupada— solo para
+  exportar un alimentador;
+- y ataría el ciclo de trabajo a una versión concreta de ArcGIS.
+
+qfieldESRI es una **carpeta que se copia y se abre con doble clic**. El
+lanzador (`qfieldesri/launcher.py`) resuelve el único detalle incómodo: `arcpy`
+solo funciona con el intérprete que instala ArcGIS, y ese intérprete no está en
+el `PATH`. Lo busca en la variable `QFIELDESRI_PYTHON`, en el intérprete actual,
+en el registro de Windows (ArcGIS Pro y ArcMap 10.5–10.8) y en las rutas
+habituales; si no lo encuentra, explica exactamente qué definir en vez de fallar
+con un `ImportError` a media ejecución.
+
+Aun así se ofrecen las tres puertas de entrada, porque cada una tiene su
+momento: la **aplicación** para el uso normal, la **caja de herramientas** para
+quien ya está dentro de ArcGIS o quiere usarlo en ModelBuilder, y la **línea de
+comandos** para automatizar.
+
+## 4. Arquitectura
 
 ```
-QFieldSync                          qfieldESRI
-──────────────────────────────────  ──────────────────────────────────────────
-Proyecto QGIS (entrada)             Geodatabase de ESRI (entrada)
-      │                                   │
-      ├─ ProjectChecker                   ├─ core/checker.py
-      ├─ LayerSource (acciones)           ├─ core/config.py (LayerAction)
-      ├─ OfflineConverter                 ├─ core/packager.py
-      │     └─ QGIS escribe el GPKG       │     ├─ writers/geopackage.py  (propio)
-      │     └─ QGIS reescribe el .qgs     │     └─ writers/qgis_project.py (propio)
-      ├─ cloud_api (Qt)                   ├─ core/cloudapi.py (urllib)
-      ├─ Diálogos Qt                      ├─ QFieldESRI.pyt (Python Toolbox)
-      └─ deltas de QFieldCloud            └─ core/synchronizer.py (línea base propia)
+                    ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+                    │ QFieldESRI.py│  │QFieldESRI.pyt│  │ python -m ...│
+                    │  (ventana)   │  │  (ArcGIS)    │  │   (consola)  │
+                    └───────┬──────┘  └──────┬───────┘  └──────┬───────┘
+                            └────────────────┼─────────────────┘
+                                             ▼
+   readers/          ┌───────────────── core/ ──────────────────┐      writers/
+ ┌────────────┐      │ scope     qué se lleva a campo           │  ┌──────────────┐
+ │ arcpy      │─────►│ checker   verificación previa            │─►│ geopackage   │
+ │ ogr        │      │ packager  geodatabase -> paquete         │  │ qfield_project│
+ │ memoria    │◄─────│ synchron. paquete -> geodatabase         │  └──────────────┘
+ └────────────┘      │ cloudapi  QFieldCloud (urllib)           │
+                     └──────────────────────────────────────────┘
+                                     profiles/  utils/
 ```
 
-Los dos módulos que QFieldSync *no tiene que escribir* —el GeoPackage y el
-`.qgs`— son justamente los que aquí hay que escribir a mano, porque en QGIS los
-pone la propia aplicación. Son el 60 % del trabajo de este complemento.
+Los tres frentes comparten el mismo motor. Los lectores están detrás de una
+interfaz (`readers/base.py`), que es lo que hace que una File Geodatabase y una
+conexión SDE se traten igual y que exista un lector en memoria para pruebas.
 
-## 4. Equivalencias, una por una
+## 5. Las piezas que había que escribir
 
-### 4.1 Datos: GeoPackage escrito con `sqlite3`
+### 5.1 GeoPackage con `sqlite3`
 
-**Por qué no usar la herramienta nativa de ArcGIS.** ArcGIS trae
-`CreateSQLiteDatabase` + `FeatureClassToFeatureClass`, pero su disponibilidad
-depende de la versión (en ArcMap 10.x es irregular), no controla el nombre de
-las tablas ni los tipos de columna, y no permite añadir la tabla auxiliar que
-necesita la sincronización de vuelta.
+ArcGIS trae `CreateSQLiteDatabase`, pero su disponibilidad depende de la versión
+(en ArcMap 10.x es irregular), no controla el nombre de las tablas ni los tipos
+de columna, y no permite añadir la tabla auxiliar que necesita la sincronización
+de vuelta.
 
-`writers/geopackage.py` escribe el contenedor directamente con `sqlite3`
-(biblioteca estándar, presente en cualquier Python de ArcGIS):
+`writers/geopackage.py` escribe el contenedor con `sqlite3`, que está en
+cualquier Python:
 
-- tablas del estándar OGC: `gpkg_spatial_ref_sys`, `gpkg_contents`,
-  `gpkg_geometry_columns`, `gpkg_extensions`;
+- tablas del estándar OGC (`gpkg_spatial_ref_sys`, `gpkg_contents`,
+  `gpkg_geometry_columns`, `gpkg_extensions`);
 - índice espacial **R-Tree** con el juego completo de disparadores del anexo F.3
-  de la especificación —sin ellos QField dejaría el índice desincronizado al
-  editar—;
-- `gpkg_ogr_contents`, la extensión que usa GDAL (y por tanto QGIS y QField)
-  para contar entidades sin recorrer la tabla;
-- cabecera binaria de geometría con envolvente, para que el filtrado espacial
-  del dispositivo sea rápido.
+  de la especificación —sin ellos el índice quedaría desincronizado en cuanto se
+  editara en campo—;
+- `gpkg_ogr_contents`, para contar entidades sin recorrer la tabla;
+- envolvente en la cabecera de cada geometría, para que el filtrado espacial del
+  dispositivo sea rápido.
 
 La geometría llega de `arcpy.Geometry.WKB`, que usa la convención antigua de
-banderas de bits para Z (`0x80000001`); `utils/wkb.py` la **normaliza a WKB
+banderas de bits para Z (`0x80000001`). `utils/wkb.py` la **normaliza a WKB
 ISO** (`1001`), que es lo que exige GeoPackage, calcula la envolvente sin
 ninguna librería espacial y promociona a multiparte las líneas y polígonos de
 una sola parte, porque una clase de ESRI admite ambas y GeoPackage exige que la
 geometría coincida con el tipo declarado.
 
-### 4.2 Formularios: el `.qgs` se genera desde el esquema
+### 5.2 El archivo de proyecto
 
-`writers/qgis_project.py` escribe el proyecto desde cero. La traducción del
-modelo de ESRI al de QGIS es el corazón del complemento:
+`writers/qfield_project.py` lo construye entero desde el esquema. La traducción
+del modelo de ESRI es el corazón del programa:
 
 | En la geodatabase | En el proyecto de QField |
 |---|---|
 | Dominio de valores codificados (≤ umbral) | widget `ValueMap` |
-| Dominio de valores codificados (> umbral) | tabla de catálogo `dom_*` en el GeoPackage + widget `ValueRelation` |
-| Dominio de rango | widget `Range` con mínimo y máximo |
-| Alias de campo | `<aliases>` |
-| Valor por defecto del subtipo por defecto | `<defaults>` |
-| Campo no anulable | `<constraints>` con `notnull_strength` |
-| Subtipos | `ValueMap` en el campo de subtipo **y** renderizado categorizado |
-| Relationship class | `<relations>` + pestaña de hijos en el formulario del padre |
-| Categoría del campo (CORE / conectividad / sistema) | pestañas del formulario y visibilidad |
-| Campo de fecha | widget `DateTime` con calendario |
-| Campo de foto configurado | `ExternalResource` con la expresión de nombrado de QFieldSync |
-| `OBJECTID`, `GlobalID` | campos ocultos y no editables (viajan porque hacen falta para volver) |
+| Dominio de valores codificados (> umbral) | tabla de catálogo `dom_*` + `ValueRelation` |
+| Dominio de rango | `Range` con mínimo y máximo |
+| Alias de campo | `aliases` |
+| Valor por defecto del subtipo por defecto | `defaults` |
+| Campo no anulable | `constraints` |
+| Subtipos | símbolo por subtipo + `ValueMap` |
+| Relationship class | `relations` + pestaña de hijos en el formulario del padre |
+| Categoría del campo | pestañas del formulario y visibilidad |
+| Campo de fecha | `DateTime` con calendario |
+| Campo de foto configurado | `ExternalResource` con expresión de nombrado |
+| `OBJECTID`, `GlobalID` | ocultos y no editables (viajan porque hacen falta para volver) |
 
 Tres decisiones merecen explicación:
 
 **Dominios grandes → tabla de catálogo.** Volcar `UP_TRF_TODOS` (1853 valores)
-como `ValueMap` dentro del XML haría el `.qgs` enorme y lento de abrir en un
-teléfono. Como tabla del GeoPackage con un `ValueRelation` encima, QField ofrece
-un desplegable con búsqueda. El umbral es configurable (40 por omisión).
+dentro del XML lo haría enorme y lento de abrir en un teléfono. Como tabla del
+GeoPackage con un `ValueRelation` encima, QField ofrece un desplegable con
+búsqueda. El umbral es configurable (40 por omisión).
 
 **Dominios que dependen del subtipo → unión, y aviso.** QField no puede cambiar
 la lista de valores según el subtipo del registro. Se ofrece la **unión** de los
 dominios posibles y el verificador emite un aviso por cada campo donde esto
-ocurre, para que el supervisor lo tenga presente al revisar lo capturado. Es una
-limitación real de la plataforma destino, no un descuido: se documenta en vez de
+ocurre. Es una limitación real de la plataforma destino: se documenta en vez de
 ocultarse.
 
 **Se exportan todos los campos, aunque el formulario oculte algunos.** Si un
-campo no viajara al dispositivo, su valor se perdería al devolver el registro a
-la geodatabase. Lo que la configuración decide es la **visibilidad**, no la
-presencia del dato.
+campo no viajara, su valor se perdería al devolver el registro. Lo que la
+configuración decide es la **visibilidad**, no la presencia del dato.
 
-### 4.3 Vocabulario de QFieldSync: se conserva tal cual
+Las propiedades de capa se escriben con las claves `QFieldSync/*` porque **son
+las que lee QField en el dispositivo** (bloqueo de geometría, nombrado de fotos,
+seguimiento GPS). Es el vocabulario del destino, no una dependencia.
 
-Las propiedades de capa se escriben con **las mismas claves** que usa
-`libqfieldsync` (`QFieldSync/action`, `QFieldSync/is_feature_addition_locked`,
-`QFieldSync/attachment_naming`…) y las opciones de proyecto van al grupo
-`qfieldsync`. Consecuencia práctica: un proyecto generado por qfieldESRI se
-puede abrir en QGIS y seguir manteniendo con QFieldSync, sin traducción
-intermedia. Las acciones por capa (`copy`, `read_only`, `empty`, `remove`)
-siguen la nomenclatura de `SyncAction`.
+### 5.3 El ámbito de exportación
 
-### 4.4 Verificación previa
+Es la pieza que decide **qué trozo de la red se lleva a campo**, y la que más
+lógica esconde.
 
-`core/checker.py` es el equivalente de `project_checker`, con los chequeos que
-importan en este contexto: colisiones de nombre de tabla, clases sin sistema de
-referencia, campos que chocan con columnas reservadas del GeoPackage, clases sin
-GlobalID (la sincronización quedaría atada a `OBJECTID`, que cambia si la clase
-se comprime), dominios que dependen del subtipo, capas demasiado grandes para un
-teléfono, y desviaciones entre el esquema real y el catálogo del perfil.
+El dato que lo explica todo: en el modelo de CNEL EP, **el campo de alimentador
+existe en 26 de las 47 clases**. Las 21 restantes son casi todas tablas *Unidad*
+—los transformadores de un puesto, las estructuras de un poste— y catálogos. No
+tienen alimentador porque lo heredan de su *Puesto*.
 
-### 4.5 Interfaz: Python Toolbox en vez de diálogos Qt
+Por eso un `WHERE` por clase escrito a mano no sirve: sería imposible de
+mantener y, peor, dejaría al técnico sin el material montado en lo que sí viajó.
+`core/scope.py` resuelve cada clase por uno de tres caminos:
 
-Los diálogos Qt de QFieldSync no tienen equivalente ni sentido en ArcGIS. La
-forma nativa de extender ArcMap y ArcGIS Pro es una **caja de herramientas**:
-`QFieldESRI.pyt` expone cinco herramientas (analizar, empaquetar, sincronizar,
-publicar, recuperar) que además quedan disponibles en ModelBuilder y en la
-ventana de Python. Todo lo que hacen está también en `python -m qfieldesri`,
-para automatizar.
+1. **por atributo**, cuando la clase tiene el campo del ámbito;
+2. **por relación**, cuando no lo tiene pero cuelga de una clase que sí: la
+   Unidad se filtra con las claves de los Puestos **realmente exportados**, que
+   el empaquetador va recogiendo al copiarlos (por eso ordena los padres antes
+   que los hijos);
+3. **completa**, dejando constancia, cuando no hay ni campo ni relación.
 
-### 4.6 QFieldCloud sin Qt
+La **subestación** se resuelve en dos pasos, como manda el modelo: la tabla
+`CIRCUITOFUENTE` (un registro por alimentador, con `IDSUBESTACION` y
+`CODIGOALIMENTADOR`) da los alimentadores de esa subestación, y a partir de ahí
+el ámbito se comporta como uno por alimentador.
 
-`core/cloudapi.py` reimplementa sobre `urllib` lo que `cloud_api.py` hace sobre
-`QgsNetworkAccessManager`: login, proyectos, subida y bajada de archivos. Sin
-dependencias externas, porque instalar paquetes en el Python de ArcGIS suele
-requerir permisos de administrador. Al subir se omite el manifiesto por omisión:
-contiene rutas de servidor y el nombre de la conexión, que no tienen por qué
-salir de la organización.
+Detalles que importan en producción:
 
-### 4.7 La vuelta: línea base propia en lugar de deltas de QFieldCloud
+- las listas `IN` se **trocean en bloques de 900** valores y la clase se recorre
+  una vez por bloque: Oracle corta en 1000 y SQL Server se degrada antes;
+- un filtro resuelto pero **sin valores** produce `1 = 0`, no una exportación
+  completa: es preferible un paquete vacío que un paquete con toda la Unidad de
+  Negocio por descuido;
+- el plan se puede **ver antes de generar nada**, clase por clase;
+- los valores elegibles salen del **dominio de la geodatabase abierta**, nunca
+  de una lista fija, porque el propio catálogo advierte que `Codigo
+  Alimentador`, `Numero Estacion` y `Subestacion` cambian en cada Unidad de
+  Negocio.
 
-QFieldSync delega el regreso de los datos en el mecanismo de *deltas* de
-QFieldCloud. Aquí no hay servidor obligatorio, así que el empaquetador guarda
-dentro del propio GeoPackage una tabla **`qfe_baseline`** con la huella
-(`md5` de los campos reescribibles + la geometría normalizada) de cada entidad
-tal como salió de la geodatabase. Esa tabla **no se registra en
-`gpkg_contents`**, de modo que QGIS, QField y GDAL no la ven.
+### 5.4 Verificación previa
 
-Al volver, `core/synchronizer.py` compara tres cosas y distingue:
+`core/checker.py` revisa antes de generar: colisiones de nombre de tabla, clases
+sin sistema de referencia, campos que chocan con columnas reservadas del
+GeoPackage, clases sin GlobalID (la sincronización quedaría atada a `OBJECTID`,
+que cambia si la clase se comprime), dominios que dependen del subtipo, capas
+demasiado grandes para un teléfono y desviaciones entre el esquema real y el
+catálogo del perfil.
+
+### 5.5 La vuelta
+
+El empaquetador guarda dentro del propio GeoPackage una tabla **`qfe_baseline`**
+con la huella (`md5` de los campos reescribibles + la geometría normalizada) de
+cada entidad tal como salió. Esa tabla **no se registra en `gpkg_contents`**, de
+modo que ninguna herramienta la ve.
+
+Al volver, `core/synchronizer.py` compara y distingue:
 
 - **altas**: filas que no estaban en la línea base;
 - **modificaciones**: filas cuya huella cambió;
 - **bajas**: filas de la línea base que ya no están;
 - **conflictos**: el registro *también* cambió en la geodatabase desde el
   empaquetado. Por omisión no se aplican: se informan para que decida una
-  persona (`--conflictos campo` permite que gane lo capturado).
+  persona.
 
-Las **bajas no se aplican salvo petición expresa** (`--aplicar-bajas`): borrar
-un elemento de una red eléctrica desde un teléfono es una decisión seria.
+Las **bajas no se aplican salvo petición expresa**: borrar un elemento de una
+red eléctrica desde un teléfono es una decisión seria.
 
 Toda la escritura ocurre dentro de una **sesión de edición de arcpy**
-(`arcpy.da.Editor`), que en una geodatabase corporativa versionada es
-obligatoria y además permite revertir el lote completo si algo falla a mitad.
+(`arcpy.da.Editor`), obligatoria en SDE versionado y que además permite revertir
+el lote completo si algo falla a mitad.
 
-## 5. Lo que hace posible la geodatabase corporativa
+### 5.6 QFieldCloud
 
-El requisito de "dejarlo abierto para geodatabase corporativa" no se resolvió
-con un parámetro, sino con una separación:
+`core/cloudapi.py` habla con QFieldCloud sobre `urllib`: login, proyectos,
+subida y bajada. Sin dependencias externas, porque instalar paquetes en el
+Python de ArcGIS suele requerir permisos de administrador. Al subir se omite el
+manifiesto por omisión: contiene rutas de servidor y el nombre de la conexión,
+que no tienen por qué salir de la organización.
 
-```
-readers/base.py      contrato: describir, iterar, escribir
-readers/arcpy_reader.py   File GDB, Personal GDB y SDE (mismo código)
-readers/ogr_reader.py     respaldo con GDAL, sin ArcGIS (solo lectura)
-readers/memory.py         pruebas y demostración
-```
+## 6. La geodatabase corporativa
 
-Ni `core`, ni `writers`, ni `profiles`, ni `utils` importan arcpy. El
-empaquetador solo habla con la interfaz del lector. Para el lector de arcpy, una
-File Geodatabase y una conexión `.sde` se abren igual: lo único que cambia es
-que en SDE se detecta el versionado, se abre la sesión de edición con `undo` y
-el recorte por área de interés aprovecha el índice espacial del servidor a
-través de `SelectLayerByLocation`. Los nombres calificados (`GYE.SDE.Barra`) se
-normalizan al escribir las tablas del GeoPackage.
+El requisito de "dejarlo abierto a SDE" no se resolvió con un parámetro sino con
+una separación. Para el lector de arcpy, una `.gdb` y un `.sde` se abren igual;
+lo único que cambia es que en SDE se detecta el versionado, la sesión de edición
+se abre con deshacer, el recorte por área de interés aprovecha el índice
+espacial del servidor y los nombres calificados (`GYE.SDE.Barra`) se normalizan
+al crear las tablas.
 
-## 6. El perfil: lo que la geodatabase no sabe de sí misma
+## 7. El perfil: lo que la geodatabase no sabe de sí misma
 
 La geodatabase sabe qué dominios y subtipos tiene, pero **no** sabe qué campos
 son obligatorios según el manual, ni cuáles son de auditoría, ni qué tabla es la
 *Unidad* de qué *Puesto*. Eso está en el catálogo del modelo, y por eso existe
 `profiles/cnel_ep.json`, generado desde `docs/modelo/` con
-`tools/build_profile.py`: 47 clases, 79 relaciones documentadas, y la categoría
-(CORE ✅ / conectividad 🔌 / sistema 🔧 / otro ▫️) de **1 981 campos**.
+`tools/build_profile.py`: 47 clases, 79 relaciones documentadas y la categoría
+(CORE / conectividad / sistema / otro) de **1 981 campos**.
 
-Lo que **no** está en el perfil, deliberadamente, son los dominios y sus valores:
-el propio catálogo advierte que `Codigo Alimentador`, `Numero Estacion` y
-`Subestacion` cambian en cada Unidad de Negocio. Se leen siempre en caliente de
-la geodatabase activa. Así el mismo perfil sirve para Guayaquil, Manabí o
-Milagro.
+Lo que **no** está en el perfil, deliberadamente, son los valores de los
+dominios. Así el mismo perfil sirve para Guayaquil, Manabí o Milagro. Para una
+geodatabase que no sea la de CNEL EP existe el perfil `generico`, que clasifica
+los campos por heurística de nombre.
 
-Para una geodatabase que no sea la de CNEL EP existe el perfil `generico`, que
-clasifica los campos por heurística de nombre —el mismo criterio con el que el
-catálogo clasificó los campos comunes—.
+## 8. Lo que no se trasladó, y por qué
 
-## 7. Lo que no se trasladó, y por qué
-
-| Función de QFieldSync | Estado en qfieldESRI | Motivo |
+| Función | Estado | Motivo |
 |---|---|---|
-| Generación de mapa base (mbtiles) | No incluida | Depende del motor de renderizado de QGIS y de sus algoritmos de procesamiento. Se puede referenciar un mapa base ya existente. |
-| Temas de mapa | No incluida | No hay equivalente en el modelo de datos de ESRI; se emula parcialmente con los grupos de capas. |
-| Simbología de ArcGIS (capas .lyr) | Renderizado propio | Se genera un renderizado por subtipo con una paleta legible en pantalla al sol. Trasladar la simbología completa de ArcFM excede el alcance. |
-| Seguimiento GPS, geovallado | Se escriben las propiedades, no hay interfaz | Las claves `QFieldSync/tracking_*` están soportadas por el escritor; falta exponerlas en el Toolbox. |
+| Mapa base en mbtiles | No incluida | Depende de un motor de renderizado. Se puede referenciar uno existente. |
+| Temas de mapa | No incluida | No hay equivalente en el modelo de ESRI; se emula con los grupos de capas. |
+| Simbología de ArcGIS/ArcFM | Renderizado propio | Se genera un símbolo por subtipo con una paleta legible al sol. Trasladar la simbología completa de ArcFM excede el alcance. |
+| Seguimiento GPS, geovallado | Propiedades escritas, sin interfaz | Las claves están soportadas por el escritor; falta exponerlas. |
 | Valores M | Se conservan si no se edita | QField no edita medidas. Se avisa en la verificación. |
-| Red geométrica y trazado de ArcFM | No se replica | `ParentCircuitSourceGUID` lo calcula el trace de ArcFM; en campo se captura, y el trace se vuelve a correr en ArcGIS tras sincronizar. Los campos viajan de solo lectura. |
-| Adjuntos binarios de la geodatabase | Ida no, vuelta sí | Las fotos se capturan en campo y se registran con `AddAttachments`; llevar los adjuntos existentes al dispositivo dispararía el tamaño del paquete. |
+| Red geométrica y trazado de ArcFM | No se replica | `ParentCircuitSourceGUID` lo calcula el trace; en campo se captura y el trace se vuelve a correr en ArcGIS. Los campos viajan de solo lectura. |
+| Adjuntos existentes de la geodatabase | Ida no, vuelta sí | Las fotos capturadas se registran con `AddAttachments`; llevar los adjuntos existentes dispararía el tamaño del paquete. |
 
-## 8. Verificación
+## 9. Verificación
 
-133 pruebas automatizadas que se ejecutan **sin ArcGIS ni QGIS instalados**,
-sobre una geodatabase de demostración en memoria que reproduce un fragmento real
-del modelo (poste, tramo MT con subtipos, puesto de transformación y su unidad):
+213 pruebas que se ejecutan **sin ArcGIS instalado**, sobre una geodatabase de
+demostración en memoria que reproduce un fragmento real del modelo (poste, tramo
+MT con subtipos, puesto de transformación con sus transformadores y la tabla de
+alimentador cabecera con tres alimentadores repartidos en tres subestaciones):
 
 ```
 python -m unittest discover -s tests -t .
 ```
 
 Cubren el contenedor GeoPackage (cabeceras, índice espacial, disparadores), la
-normalización de WKB, la estructura del `.qgs` (widgets, relaciones, pestañas,
-restricciones), el perfil, el empaquetado completo y el ciclo de vuelta con
-detección de conflictos.
+normalización de WKB, la estructura del archivo de proyecto, el perfil, el
+ámbito de exportación en sus seis formas, el empaquetado completo, los adjuntos,
+el ciclo de vuelta con detección de conflictos, la caja de herramientas de
+ArcGIS (cargada con un `arcpy` simulado), la lógica de la aplicación de
+escritorio, el lanzador y el guardia de dependencias.
 
 Para editar un GeoPackage con `sqlite3` puro —lo que hacen las pruebas, y lo que
 puede necesitar cualquier script— hace falta registrar las funciones `ST_*` que
 usan los disparadores del índice espacial: `utils/sqlite_gpkg.connect()` las
 proporciona.
 
-## 9. Ciclo de trabajo resultante
+## 10. Ciclo de trabajo resultante
 
 ```
-ArcGIS Desktop                        Campo                     ArcGIS Desktop
-──────────────                        ─────                     ──────────────
-1 Analizar geodatabase
-2 Empaquetar para QField  ──────►  QField (sin cobertura)
+Oficina                              Campo                    Oficina
+───────                              ─────                    ───────
+1 Abrir y analizar la geodatabase
+2 Elegir ámbito y exportar   ─────►  QField (sin cobertura)
   (o publicar en QFieldCloud)          captura y edición
                                             │
-                                   4/5 QFieldCloud o cable
+                                   QFieldCloud o cable
                                             │
-                                            └──────────────►  3 Sincronizar
-                                                                 (simula → aplica)
-                                                              + volver a correr el
-                                                                trace de ArcFM
+                                            └──────────────►  3 Comparar
+                                                                 y aplicar
+                                                              + volver a correr
+                                                                el trace de ArcFM
 ```
 
 ---
 
-*qfieldESRI reutiliza la arquitectura y el vocabulario de QFieldSync
-(OPENGIS.ch, GPL v2+) y se publica bajo la misma licencia.*
+*Publicado bajo GPL v2 o posterior.*

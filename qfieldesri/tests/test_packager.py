@@ -58,6 +58,7 @@ class PackagerTest(unittest.TestCase):
         self.assertEqual(
             sorted(self.result.layer_counts),
             [
+                "CIRCUITOFUENTE",
                 "EstructuraSoporte",
                 "PuestoTransfDistribucion",
                 "TramoDistribucionAereo",
@@ -104,7 +105,7 @@ class PackagerTest(unittest.TestCase):
         ).fetchone()[0]
         self.assertTrue(key.startswith("{P"))
 
-    # -- proyecto QGIS -------------------------------------------------
+    # -- proyecto de QField --------------------------------------------
     def _layer(self, name):
         for layer in self.project.findall("./projectlayers/maplayer"):
             if layer.find("datasource").text.endswith("layername=%s" % name):
@@ -182,11 +183,11 @@ class PackagerTest(unittest.TestCase):
             manifest = json.load(handle)
         self.assertEqual(manifest["profile"], "cnel_ep")
         self.assertEqual(manifest["crs"], 32717)
-        entry = [
+        entry = next(
             layer
             for layer in manifest["layers"]
             if layer["source_class"] == "EstructuraSoporte"
-        ][0]
+        )
         self.assertEqual(entry["key_field"], "GLOBALID")
         self.assertIn("MATERIAL", entry["writable_fields"])
         # Los campos que ArcGIS gestiona no se pueden reescribir.

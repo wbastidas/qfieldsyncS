@@ -1,25 +1,28 @@
-"""Generador de proyectos QGIS (.qgs) para QField, sin QGIS instalado.
+# -*- coding: utf-8 -*-
+"""Generador del archivo de proyecto que abre QField.
 
-QField no lee una geodatabase de ESRI: lee un proyecto QGIS con capas OGR. La
-parte de QFieldSync que aqui no se puede reutilizar tal cual es justamente la
-que construye ese proyecto, porque en QFieldSync el proyecto ya existe (lo hizo
-el usuario en QGIS) y el complemento solo lo transforma. En qfieldESRI no hay
-proyecto de partida: la geodatabase *es* la fuente, asi que este modulo escribe
-el ``.qgs`` desde cero a partir de los metadatos leidos con arcpy.
+QField guarda su proyecto en un XML con extension ``.qgs``. Eso es un
+**formato de archivo**, no una dependencia: este modulo lo escribe con
+``xml.etree`` de la biblioteca estandar, y qfieldESRI no importa, no instala y
+no necesita QGIS en ninguna parte. La prueba ``test_dependencias`` lo verifica
+en cada ejecucion de la bateria.
 
-Se traduce, capa por capa:
+El proyecto se construye entero desde el esquema de la geodatabase, que es la
+unica fuente: aqui no hay ningun proyecto previo que transformar. Se traduce,
+capa por capa:
 
 * dominios de valores codificados -> ``ValueMap`` (o ``ValueRelation`` contra
   una tabla de catalogo, cuando el dominio es demasiado grande);
 * dominios de rango                -> ``Range``;
 * alias de campo                   -> ``aliases``;
 * valores por defecto de subtipo    -> ``defaults``;
-* subtipos                         -> renderizado categorizado + ``ValueMap``;
+* subtipos                         -> simbolo por subtipo + ``ValueMap``;
 * relationship classes             -> ``relations`` + pestana de hijos en el
   formulario del padre (el par Puesto/Unidad del modelo CNEL EP);
 * campos no anulables              -> ``constraints``;
 * categoria del campo              -> pestanas del formulario y visibilidad;
-* opciones de QField                -> propiedades ``QFieldSync/*``.
+* opciones de campo                 -> propiedades ``QFieldSync/*``, que son
+  las claves que lee **QField** en el dispositivo.
 """
 
 import io
@@ -27,7 +30,7 @@ import json
 import uuid
 import xml.etree.ElementTree as ET
 
-QGIS_VERSION = "3.40.0-Bratislava"
+PROJECT_FORMAT_VERSION = "3.40.0-Bratislava"
 
 #: Paleta de apoyo para el renderizado por subtipo (colores distinguibles en
 #: pantalla de telefono a pleno sol).
@@ -50,10 +53,10 @@ def _color(index, alpha=255):
 
 
 # ----------------------------------------------------------------------
-# serializacion del "Option map" de QGIS
+# serializacion del "Option map" del formato de proyecto
 # ----------------------------------------------------------------------
 def _option_value(parent, value, name=None):
-    """Serializa un valor Python en el formato ``<Option>`` de QGIS."""
+    """Serializa un valor Python en el formato ``<Option>`` del proyecto."""
     attributes = {}
     if name is not None:
         attributes["name"] = name
@@ -130,7 +133,7 @@ class WidgetSpec(object):
 
 
 class FieldSpec(object):
-    """Un campo tal como se publica en el proyecto QGIS."""
+    """Un campo tal como se publica en el proyecto de QField."""
 
     def __init__(
         self,
@@ -186,7 +189,7 @@ class LayerSpec(object):
         self.title = title or table
         #: ``Point``, ``Line``, ``Polygon`` o ``None`` para tablas
         self.geometry_type = geometry_type
-        #: ``Point``, ``MultiLineString``, ... tal como lo espera QGIS
+        #: ``Point``, ``MultiLineString``, ... como lo nombra el formato
         self.wkb_type = wkb_type
         self.fields = list(fields or [])
         self.crs = crs
@@ -227,7 +230,7 @@ class LayerSpec(object):
 
 
 class RelationSpec(object):
-    """Una relationship class trasladada a una relacion de QGIS."""
+    """Una relationship class trasladada a una relacion del proyecto."""
 
     def __init__(
         self,
@@ -245,7 +248,7 @@ class RelationSpec(object):
         self.parent_field = parent_field
         self.child_field = child_field
         self.label = label or child_table
-        #: ``Association`` o ``Composition`` (borrado en cascada en QGIS/QField)
+        #: ``Association`` o ``Composition`` (borrado en cascada en QField)
         self.strength = strength
         self.id = "%s_%s" % (_sanitize_id(name), uuid.uuid4().hex[:8])
 
@@ -257,7 +260,7 @@ def _sanitize_id(name):
 # ----------------------------------------------------------------------
 # escritor
 # ----------------------------------------------------------------------
-class QgisProjectWriter(object):
+class QFieldProjectWriter(object):
     """Construye el arbol XML de un ``.qgs`` listo para QField."""
 
     def __init__(
@@ -319,7 +322,7 @@ class QgisProjectWriter(object):
             "qgis",
             {
                 "projectname": self.title,
-                "version": QGIS_VERSION,
+                "version": PROJECT_FORMAT_VERSION,
                 "saveUser": "qfieldesri",
                 "saveUserFull": "qfieldESRI",
             },

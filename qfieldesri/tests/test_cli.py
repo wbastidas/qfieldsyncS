@@ -50,7 +50,7 @@ class CliTest(unittest.TestCase):
 
         with open(report) as handle:
             payload = json.load(handle)
-        self.assertEqual(len(payload["layers"]), 4)
+        self.assertEqual(len(payload["layers"]), 5)
         self.assertIn("Provincias", payload["domains"])
 
     def test_configurar_y_empaquetar_con_configuracion(self):
@@ -180,6 +180,74 @@ class CliTest(unittest.TestCase):
         code = self._run("sincronizar", package, "--gdb", "demo.gdb", "--aplicar")
         self.assertEqual(code, cli.EXIT_OK)
         self.assertEqual(len(self.reader.updated), 1)
+
+    def test_listar_ambitos_disponibles(self):
+        self.assertEqual(self._run("ambitos", "--gdb", "demo.gdb"), cli.EXIT_OK)
+        self.assertIn("alimentador", self.text)
+        self.assertIn("subestacion", self.text)
+
+    def test_listar_valores_de_un_ambito(self):
+        self._run("ambitos", "--gdb", "demo.gdb", "--ambito", "alimentador")
+        self.assertIn("04BH070T11", self.text)
+        self.assertIn("S/E BELO HORIZONTE", self.text)
+
+    def test_listar_solo_los_presentes_en_una_clase(self):
+        self._run(
+            "ambitos",
+            "--gdb",
+            "demo.gdb",
+            "--ambito",
+            "alimentador",
+            "--presentes-en",
+            "TramoDistribucionAereo",
+        )
+        self.assertIn("04BH070T11", self.text)
+        self.assertNotIn("04OR240T22", self.text)
+
+    def test_empaquetar_por_alimentador(self):
+        code = self._run(
+            "empaquetar",
+            "--gdb",
+            "demo.gdb",
+            "--salida",
+            self.directory,
+            "--nombre",
+            "por_alimentador",
+            "--ambito",
+            "alimentador",
+            "--valores",
+            "04BH070T11",
+        )
+        self.assertEqual(code, cli.EXIT_OK)
+        self.assertIn("Filtradas por relacion con su Puesto", self.text)
+
+        import sqlite3
+
+        connection = sqlite3.connect(
+            os.path.join(self.directory, "por_alimentador", "data.gpkg")
+        )
+        count = connection.execute("SELECT count(*) FROM EstructuraSoporte").fetchone()[
+            0
+        ]
+        connection.close()
+        self.assertEqual(count, 2)
+
+    def test_empaquetar_por_subestacion(self):
+        code = self._run(
+            "empaquetar",
+            "--gdb",
+            "demo.gdb",
+            "--salida",
+            self.directory,
+            "--nombre",
+            "por_subestacion",
+            "--ambito",
+            "subestacion",
+            "--valores",
+            "04BH07",
+        )
+        self.assertEqual(code, cli.EXIT_OK)
+        self.assertIn("CIRCUITOFUENTE", self.text)
 
     def test_demo_no_necesita_geodatabase(self):
         code = self._run("demo", "--salida", self.directory, "--nombre", "ejemplo")

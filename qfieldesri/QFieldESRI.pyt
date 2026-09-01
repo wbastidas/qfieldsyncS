@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """Caja de herramientas de qfieldESRI para ArcGIS Desktop.
 
-Es el equivalente del menu de QFieldSync dentro de QGIS: las mismas
-operaciones, pero como herramientas de geoprocesamiento de ArcGIS, que es la
-forma nativa de extender ArcMap y ArcGIS Pro (y la unica que ademas queda
-disponible en ModelBuilder y en la ventana de Python).
+Expone qfieldESRI como herramientas de geoprocesamiento, que es la forma
+nativa de extender ArcMap y ArcGIS Pro y la unica que ademas queda disponible
+en ModelBuilder y en la ventana de Python. Lo mismo se puede hacer con la
+aplicacion de escritorio (``QFieldESRI.py``) o con la linea de comandos.
 
 Instalacion: copie la carpeta completa y, en el panel *Catalogo*, conectese a
 ella. ``QFieldESRI.pyt`` aparecera como una caja de herramientas con cinco
@@ -25,10 +25,73 @@ if _HERE not in sys.path:
 from qfieldesri.core.checker import WorkspaceChecker  # noqa: E402
 from qfieldesri.core.config import LayerAction, PackagingConfig  # noqa: E402
 from qfieldesri.core.packager import Packager, load_manifest  # noqa: E402
+from qfieldesri.core.scope import Scope, ScopeKind, ScopeResolver  # noqa: E402
 from qfieldesri.core.synchronizer import ConflictPolicy, Synchronizer  # noqa: E402
-from qfieldesri.profiles import available_profiles  # noqa: E402
+from qfieldesri.profiles import available_profiles, load_profile  # noqa: E402
 from qfieldesri.readers.arcpy_reader import ArcpyReader  # noqa: E402
 from qfieldesri.version import __version__  # noqa: E402
+
+
+#: Opcion "sin acotar" del desplegable de ambito.
+SCOPE_ALL = "Toda la geodatabase"
+
+#: Separador entre el codigo y su descripcion en los desplegables de valores.
+_CODE_SEPARATOR = " - "
+
+
+def _by_name(parameters):
+    """Parametros por nombre: mas legible y a prueba de reordenaciones."""
+    return dict((parameter.name, parameter) for parameter in parameters)
+
+
+def _multi(parameter):
+    """Lista de un parametro multivalor, venga como lista o como texto."""
+    value = parameter.valueAsText
+    if not value:
+        return []
+    return [item.strip("';\"") for item in value.split(";") if item.strip()]
+
+
+def _scope_kind_from_label(label):
+    """Del texto del desplegable al identificador del ambito."""
+    if not label or label == SCOPE_ALL:
+        return None
+    for kind, text in ScopeKind.LABELS.items():
+        if text == label:
+            return kind
+    return label
+
+
+def _scope_code(item):
+    """Del texto 'codigo - descripcion' al codigo que se guarda."""
+    return item.split(_CODE_SEPARATOR)[0].strip()
+
+
+def _scope_value_labels(workspace, profile_name, kind, only_present_in=None):
+    """Valores elegibles del ambito, leidos de la geodatabase.
+
+    Nunca de una lista fija: los alimentadores y las subestaciones cambian en
+    cada Unidad de Negocio.
+    """
+    if not kind:
+        return []
+    try:
+        reader = _open_reader(workspace)
+    except Exception:  # noqa: BLE001 - geodatabase aun no valida en el dialogo
+        return []
+    try:
+        info = reader.describe_workspace()
+        resolver = ScopeResolver(info, load_profile(profile_name or "cnel_ep"), reader)
+        values = resolver.available_values(kind, only_present_in=only_present_in)
+        return [
+            "%s%s%s" % (code, _CODE_SEPARATOR, label) if label else str(code)
+            for code, label in values
+        ]
+    except Exception as error:  # noqa: BLE001
+        arcpy.AddWarning("No se pudieron leer los valores del ambito: %s" % error)
+        return []
+    finally:
+        reader.close()
 
 
 def _progress(message, percent=None):
@@ -216,14 +279,16 @@ class EmpaquetarParaQField(object):
     """Geodatabase -> carpeta de proyecto de QField."""
 
     def __init__(self):
-        self.label = "2 · Empaquetar para QField"
+        self.label = "2 - Empaquetar para QField"
         self.description = (
             "Genera la carpeta que se copia al dispositivo: un GeoPackage con "
-            "los datos y un proyecto QGIS con los formularios, dominios, "
-            "subtipos y relaciones ya traducidos."
+            "los datos y el proyecto con los formularios, dominios, subtipos y "
+            "relaciones ya traducidos. La exportacion se acota por alimentador, "
+            "subestacion, poligono de sector o division politica."
         )
         self.canRunInBackground = False
 
+    # -- parametros ----------------------------------------------------
     def getParameterInfo(self):  # noqa: PLR0915
         workspace = arcpy.Parameter(
             displayName="Geodatabase de origen",
@@ -265,6 +330,56 @@ class EmpaquetarParaQField(object):
         profile.filter.list = available_profiles()
         profile.value = "cnel_ep"
 
+        # --- ambito de exportacion ------------------------------------
+        scope_kind = arcpy.Parameter(
+            displayName="Acotar la exportacion por",
+            name="scope_kind",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input",
+            category="Ambito de exportacion",
+        )
+        scope_kind.filter.list = [SCOPE_ALL] + [
+            ScopeKind.LABELS[kind] for kind in ScopeKind.ALL
+        ]
+        scope_kind.value = SCOPE_ALL
+
+        scope_values = arcpy.Parameter(
+            displayName="Valores (alimentadores, subestaciones, parroquias...)",
+            name="scope_values",
+            datatype="GPString",
+            parameterType="Optional",
+            direction="Input",
+            multiValue=True,
+            category="Ambito de exportacion",
+        )
+        only_present = arcpy.Parameter(
+            displayName="Ofrecer solo los valores presentes en esta clase",
+            name="scope_present_in",
+            datatype="GPString",
+            parameterType="Optional",
+            direction="Input",
+            category="Ambito de exportacion",
+        )
+        polygon = arcpy.Parameter(
+            displayName="Poligono del sector (capa de poligonos)",
+            name="scope_polygon",
+            datatype="GPFeatureLayer",
+            parameterType="Optional",
+            direction="Input",
+            category="Ambito de exportacion",
+        )
+        follow = arcpy.Parameter(
+            displayName="Arrastrar las tablas Unidad de los Puestos exportados",
+            name="scope_follow",
+            datatype="GPBoolean",
+            parameterType="Optional",
+            direction="Input",
+            category="Ambito de exportacion",
+        )
+        follow.value = True
+
+        # --- seleccion fina de clases ---------------------------------
         layers = arcpy.Parameter(
             displayName="Clases a incluir (vacio = todas)",
             name="layers",
@@ -272,6 +387,7 @@ class EmpaquetarParaQField(object):
             parameterType="Optional",
             direction="Input",
             multiValue=True,
+            category="Clases y campos",
         )
         read_only = arcpy.Parameter(
             displayName="Clases de solo consulta",
@@ -280,13 +396,15 @@ class EmpaquetarParaQField(object):
             parameterType="Optional",
             direction="Input",
             multiValue=True,
+            category="Clases y campos",
         )
         filters = arcpy.Parameter(
-            displayName="Filtros por clase (Clase / Clausula WHERE)",
+            displayName="Filtros adicionales por clase (se suman al ambito)",
             name="filters",
             datatype="GPValueTable",
             parameterType="Optional",
             direction="Input",
+            category="Clases y campos",
         )
         filters.columns = [["GPString", "Clase"], ["GPSQLExpression", "WHERE"]]
 
@@ -296,22 +414,17 @@ class EmpaquetarParaQField(object):
             datatype="GPValueTable",
             parameterType="Optional",
             direction="Input",
+            category="Clases y campos",
         )
         photos.columns = [["GPString", "Clase"], ["GPString", "Campo"]]
 
-        aoi = arcpy.Parameter(
-            displayName="Area de interes (capa de poligonos)",
-            name="aoi",
-            datatype="GPFeatureLayer",
-            parameterType="Optional",
-            direction="Input",
-        )
         related = arcpy.Parameter(
             displayName="Incluir las tablas relacionadas (Unidades)",
             name="include_related",
             datatype="GPBoolean",
             parameterType="Optional",
             direction="Input",
+            category="Clases y campos",
         )
         related.value = True
 
@@ -321,6 +434,7 @@ class EmpaquetarParaQField(object):
             datatype="GPLong",
             parameterType="Optional",
             direction="Input",
+            category="Opciones avanzadas",
         )
         threshold.value = 40
 
@@ -330,6 +444,7 @@ class EmpaquetarParaQField(object):
             datatype="GPBoolean",
             parameterType="Optional",
             direction="Input",
+            category="Opciones avanzadas",
         )
         force.value = False
 
@@ -339,6 +454,7 @@ class EmpaquetarParaQField(object):
             datatype="DEFile",
             parameterType="Optional",
             direction="Output",
+            category="Opciones avanzadas",
         )
         return [
             workspace,
@@ -346,45 +462,86 @@ class EmpaquetarParaQField(object):
             name,
             title,
             profile,
+            scope_kind,
+            scope_values,
+            only_present,
+            polygon,
+            follow,
             layers,
             read_only,
             filters,
             photos,
-            aoi,
             related,
             threshold,
             force,
             config_out,
         ]
 
+    # -- comportamiento del dialogo ------------------------------------
     def updateParameters(self, parameters):
-        """Rellena los desplegables de clases en cuanto se elige la geodatabase."""
-        if parameters[0].altered and parameters[0].valueAsText:
-            names = _list_layer_names(parameters[0].valueAsText)
-            for index in (5, 6):
-                parameters[index].filter.list = names
+        """Rellena los desplegables leyendo la geodatabase elegida.
+
+        Los alimentadores y las subestaciones se leen del dominio de la
+        geodatabase activa, nunca de una lista fija: cambian en cada Unidad de
+        Negocio.
+        """
+        values = _by_name(parameters)
+        workspace = values["workspace"].valueAsText
+
+        if values["workspace"].altered and workspace:
+            names = _list_layer_names(workspace)
+            for key in ("layers", "read_only", "scope_present_in"):
+                values[key].filter.list = names
+
+        kind = _scope_kind_from_label(values["scope_kind"].valueAsText)
+        is_polygon = kind == ScopeKind.POLIGONO
+        values["scope_polygon"].enabled = is_polygon
+        values["scope_values"].enabled = bool(kind) and not is_polygon
+        values["scope_present_in"].enabled = values["scope_values"].enabled
+
+        if values["scope_values"].enabled and workspace:
+            if (
+                values["scope_kind"].altered
+                or values["scope_present_in"].altered
+                or values["workspace"].altered
+            ):
+                values["scope_values"].filter.list = _scope_value_labels(
+                    workspace,
+                    values["profile"].valueAsText,
+                    kind,
+                    values["scope_present_in"].valueAsText,
+                )
         return
 
+    def updateMessages(self, parameters):
+        values = _by_name(parameters)
+        kind = _scope_kind_from_label(values["scope_kind"].valueAsText)
+        if kind == ScopeKind.POLIGONO and not values["scope_polygon"].valueAsText:
+            values["scope_polygon"].setIDMessage("ERROR", 530)
+        elif kind and kind != ScopeKind.POLIGONO and not values["scope_values"].value:
+            values["scope_values"].setWarningMessage(
+                "Sin valores elegidos se exportara la geodatabase completa."
+            )
+        return
+
+    # -- ejecucion -----------------------------------------------------
     def execute(self, parameters, messages):  # noqa: ARG002, PLR0912
-        workspace = parameters[0].valueAsText
-        selected = parameters[5].valueAsText
-        selected = selected.split(";") if selected else []
-        read_only = parameters[6].valueAsText
-        read_only = read_only.split(";") if read_only else []
+        values = _by_name(parameters)
+        workspace = values["workspace"].valueAsText
+
+        selected = _multi(values["layers"])
+        read_only = _multi(values["read_only"])
 
         config = PackagingConfig(
             workspace=workspace,
-            output_dir=parameters[1].valueAsText,
-            project_name=parameters[2].valueAsText,
-            title=parameters[3].valueAsText or parameters[2].valueAsText,
-            profile=parameters[4].valueAsText,
-            include_related_tables=bool(parameters[10].value),
-            big_domain_threshold=int(parameters[11].value or 40),
+            output_dir=values["output_dir"].valueAsText,
+            project_name=values["project_name"].valueAsText,
+            title=values["title"].valueAsText or values["project_name"].valueAsText,
+            profile=values["profile"].valueAsText,
+            include_related_tables=bool(values["include_related"].value),
+            big_domain_threshold=int(values["threshold"].value or 40),
+            scope=self._scope(values),
         )
-
-        aoi_wkt, aoi_crs = _aoi_to_wkt(parameters[9].valueAsText)
-        config.area_of_interest = aoi_wkt
-        config.area_of_interest_crs = aoi_crs
 
         reader = _open_reader(workspace)
         try:
@@ -400,16 +557,16 @@ class EmpaquetarParaQField(object):
             for layer_name in read_only:
                 config.layer_config(layer_name).action = LayerAction.READ_ONLY
 
-            for row in parameters[7].value or []:
+            for row in values["filters"].value or []:
                 config.layer_config(str(row[0])).where_clause = str(row[1] or "")
-            for row in parameters[8].value or []:
-                config.layer_config(str(row[0])).attachment_fields[
-                    str(row[1])
-                ] = "image"
+            for row in values["photos"].value or []:
+                config.layer_config(str(row[0])).attachment_fields[str(row[1])] = (
+                    "image"
+                )
 
             result = WorkspaceChecker(info, config).check()
             _report(result)
-            if result.has_errors and not parameters[12].value:
+            if result.has_errors and not values["force"].value:
                 arcpy.AddError(
                     "Se encontraron errores. Corrijalos o marque la casilla "
                     "para empaquetar de todos modos."
@@ -420,6 +577,10 @@ class EmpaquetarParaQField(object):
             packaging = Packager(reader, config, progress=_progress).run()
 
             arcpy.AddMessage("")
+            if packaging.scope_description:
+                for line in packaging.scope_description.splitlines():
+                    arcpy.AddMessage(line)
+                arcpy.AddMessage("")
             arcpy.AddMessage("Paquete: %s" % packaging.project_dir)
             for layer_name in sorted(packaging.layer_counts):
                 arcpy.AddMessage(
@@ -429,21 +590,41 @@ class EmpaquetarParaQField(object):
             arcpy.AddMessage(
                 "  %-40s %8d entidades" % ("TOTAL", packaging.total_features)
             )
+            if packaging.total_features == 0:
+                arcpy.AddWarning(
+                    "El paquete salio vacio: revise el ambito elegido."
+                )
             arcpy.AddMessage("")
             arcpy.AddMessage(
                 "Copie la carpeta completa al dispositivo (o publiquela con la "
-                "herramienta 4) y abra el archivo .qgs desde QField."
+                "herramienta 4) y abra el proyecto desde QField."
             )
 
-            if parameters[13].valueAsText:
-                config.save(parameters[13].valueAsText)
+            if values["config_out"].valueAsText:
+                config.save(values["config_out"].valueAsText)
                 arcpy.AddMessage(
-                    "Configuracion guardada en %s" % parameters[13].valueAsText
+                    "Configuracion guardada en %s" % values["config_out"].valueAsText
                 )
         finally:
             reader.close()
             arcpy.ResetProgressor()
 
+    def _scope(self, values):
+        """Traduce lo elegido en el dialogo a un ambito de exportacion."""
+        kind = _scope_kind_from_label(values["scope_kind"].valueAsText)
+        follow = bool(values["scope_follow"].value)
+        if not kind:
+            return Scope()
+        if kind == ScopeKind.POLIGONO:
+            wkt, code = _aoi_to_wkt(values["scope_polygon"].valueAsText)
+            return Scope(
+                kind, polygon_wkt=wkt, polygon_crs=code, follow_relationships=follow
+            )
+        return Scope(
+            kind,
+            values=[_scope_code(item) for item in _multi(values["scope_values"])],
+            follow_relationships=follow,
+        )
 
 # ----------------------------------------------------------------------
 class SincronizarDesdeQField(object):

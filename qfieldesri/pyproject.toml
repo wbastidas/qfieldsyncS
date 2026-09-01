@@ -1,0 +1,103 @@
+[project]
+name = "qfieldesri"
+description = "Migracion de geodatabases de ESRI (File Geodatabase y corporativa) a QField, y regreso de lo capturado en campo."
+version = "1.0.0"
+requires-python = ">=2.7"
+
+[project.urls]
+documentation = "https://docs.qfield.org/get-started/"
+
+# ---------------------------------------------------------------------------
+# Configuracion propia de ruff para este subproyecto.
+#
+# qfieldESRI se ejecuta dentro del Python de ArcGIS, que en ArcMap 10.x sigue
+# siendo **Python 2.7**. Por eso aqui se desactivan las reglas de modernizacion
+# a Python 3: seguirlas romperia el complemento en la mitad de las
+# instalaciones a las que va dirigido. El resto de reglas del repositorio se
+# mantienen.
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py37"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    # --- compatibilidad con el Python 2.7 de ArcMap ------------------------
+    # https://docs.astral.sh/ruff/rules/printf-string-formatting/
+    # `%` es la unica forma de formateo disponible en 2.7 sin f-strings.
+    "UP031",
+    "UP032",
+    # https://docs.astral.sh/ruff/rules/useless-object-inheritance/
+    # En 2.7 `class X(object)` es la diferencia entre clase nueva y antigua.
+    "UP004",
+    # https://docs.astral.sh/ruff/rules/utf8-encoding-declaration/
+    # En 2.7 la cabecera `# -*- coding: utf-8 -*-` es obligatoria.
+    "UP009",
+    # https://docs.astral.sh/ruff/rules/open-builtin/
+    # `io.open` es lo que da un `open()` con encoding en 2.7.
+    "UP020",
+    "UP010",
+    "UP003",
+    "UP025",
+    "UP015",
+    "C401",
+    "C402",
+    "C405",
+    "C408",
+    "RUF005",
+    "SIM105",  # `contextlib.suppress` no existe en 2.7
+    # https://docs.astral.sh/ruff/rules/raise-without-from-inside-except/
+    # `raise ... from` es sintaxis de Python 3.
+    "B904",
+    "FA102",
+    "PLR1714",
+
+    # --- decisiones de diseno del complemento ------------------------------
+    # Los modulos se importan de forma perezosa a proposito: arcpy, GDAL y el
+    # cliente de la nube solo deben cargarse en el camino que los usa.
+    "PLC0415",
+    # Importaciones relativas: el paquete se copia entero junto al .pyt y no se
+    # instala, asi que las rutas absolutas no serian resolubles.
+    "TID252",
+    # Los nombres de tabla y campo vienen del esquema de la geodatabase y hay
+    # que interpolarlos en el SQL; los valores siempre van parametrizados.
+    "S608",
+    # Firmas largas: son configuraciones, no logica.
+    "PLR0913",
+    "PLR0917",
+    # Numeros literales en comprobaciones de formato binario y de umbrales.
+    "PLR2004",
+    # Tablas de traduccion de tipos: una salida por tipo se lee mejor que un
+    # diccionario con casos especiales.
+    "PLR0911",
+    # Pruebas escritas con unittest (funciona en 2.7 y no anade dependencias).
+    "PT009",
+    "PT027",
+    "SLF001",
+    # Argumentos no usados en las firmas que impone ArcGIS y en las
+    # implementaciones de la interfaz de lectores.
+    "ARG002",
+    "ARG005",
+    "D102",
+    # Fechas locales: el manifiesto registra la hora del equipo que empaqueta.
+    "DTZ005",
+
+    # --- ya ignoradas en el repositorio raiz -------------------------------
+    "E501", "D10", "D203", "D205", "D212", "D213", "D400", "D401", "D415",
+    "EM101", "EM102", "EM103", "FBT", "SIM102", "SIM108", "SIM110", "S101",
+    "TRY003", "TRY300", "TRY301", "RET504", "RET505", "PIE810", "PLR5501",
+    "RSE102", "COM812", "BLE001", "FA100", "PTH", "ANN", "ERA001", "PERF401",
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 30
+
+[tool.ruff.lint.pycodestyle]
+max-line-length = 88
+
+[tool.ruff.lint.per-file-ignores]
+# En las pruebas se analiza XML que genera este mismo codigo, las fechas son
+# fijas a proposito y "token" no es una contrasena.
+"tests/*" = ["D", "PLR6301", "S314", "S106", "DTZ001", "RET503"]
+"tools/*" = ["T201", "INP001"]
+"QFieldESRI.pyt" = ["E402", "N999"]

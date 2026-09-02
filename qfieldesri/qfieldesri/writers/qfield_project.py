@@ -789,9 +789,7 @@ class QFieldProjectWriter(object):
             Renderer.GRADUATED: self._write_graduated_renderer,
             Renderer.RULE_BASED: self._write_rule_renderer,
         }
-        writers.get(renderer.kind, self._write_single_renderer)(
-            parent, renderer, layer
-        )
+        writers.get(renderer.kind, self._write_single_renderer)(parent, renderer, layer)
 
     def _renderer_element(self, parent, renderer_type, extra=None):
         attributes = {

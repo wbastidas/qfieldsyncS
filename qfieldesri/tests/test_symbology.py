@@ -50,8 +50,11 @@ def cim_document():
                                     "label": "MT trifasico",
                                     "values": [{"fieldValues": ["1"]}],
                                     "symbol": _line_symbol(
-                                        1.5, {"type": "CIMRGBColor",
-                                               "values": [230, 0, 0, 100]}
+                                        1.5,
+                                        {
+                                            "type": "CIMRGBColor",
+                                            "values": [230, 0, 0, 100],
+                                        },
                                     ),
                                 },
                                 {
@@ -59,8 +62,10 @@ def cim_document():
                                     "values": [{"fieldValues": ["2"]}],
                                     "symbol": _line_symbol(
                                         1.0,
-                                        {"type": "CIMCMYKColor",
-                                         "values": [0, 100, 100, 0, 100]},
+                                        {
+                                            "type": "CIMCMYKColor",
+                                            "values": [0, 100, 100, 0, 100],
+                                        },
                                         dashes=[6, 3],
                                     ),
                                 },
@@ -83,16 +88,20 @@ def cim_document():
                                 "symbolLayers": [
                                     {
                                         "type": "CIMSolidFill",
-                                        "color": {"type": "CIMRGBColor",
-                                                  "values": [0, 0, 0, 100]},
+                                        "color": {
+                                            "type": "CIMRGBColor",
+                                            "values": [0, 0, 0, 100],
+                                        },
                                     }
                                 ],
                                 "haloSymbol": {
                                     "symbolLayers": [
                                         {
                                             "type": "CIMSolidFill",
-                                            "color": {"type": "CIMRGBColor",
-                                                      "values": [255, 255, 255, 100]},
+                                            "color": {
+                                                "type": "CIMRGBColor",
+                                                "values": [255, 255, 255, 100],
+                                            },
                                         }
                                     ]
                                 },
@@ -119,8 +128,13 @@ def cim_document():
                                         {
                                             "geometry": {
                                                 "rings": [
-                                                    [[0, -1], [1, 0], [0, 1],
-                                                     [-1, 0], [0, -1]]
+                                                    [
+                                                        [0, -1],
+                                                        [1, 0],
+                                                        [0, 1],
+                                                        [-1, 0],
+                                                        [0, -1],
+                                                    ]
                                                 ]
                                             },
                                             "symbol": {
@@ -130,7 +144,12 @@ def cim_document():
                                                         "type": "CIMSolidFill",
                                                         "color": {
                                                             "type": "CIMRGBColor",
-                                                            "values": [0, 112, 255, 100],
+                                                            "values": [
+                                                                0,
+                                                                112,
+                                                                255,
+                                                                100,
+                                                            ],
                                                         },
                                                     },
                                                     {
@@ -284,8 +303,7 @@ class LyrxTest(unittest.TestCase):
     def test_lee_todas_las_capas(self):
         self.assertEqual(
             sorted(self.result.styles),
-            ["EstructuraSoporte", "PuestoTransfDistribucion",
-             "TramoDistribucionAereo"],
+            ["EstructuraSoporte", "PuestoTransfDistribucion", "TramoDistribucionAereo"],
         )
         self.assertEqual(self.result.warnings, [])
 
@@ -362,7 +380,7 @@ class LyrxTest(unittest.TestCase):
     def test_archivo_que_no_es_json(self):
         path = os.path.join(self.directory, "malo.lyrx")
         with io.open(path, "w", encoding="utf-8") as handle:
-            handle.write(u"esto no es json")
+            handle.write("esto no es json")
         with self.assertRaises(LyrxError):
             read_lyrx(path)
 
@@ -448,10 +466,16 @@ class StyleSheetTest(unittest.TestCase):
                         "tipo": "categorizado",
                         "campo": "SUBTIPO",
                         "categorias": [
-                            {"valor": 1, "etiqueta": "BT",
-                             "simbolo": {"color": "#1f6fb4"}},
-                            {"valor": 2, "etiqueta": "MT",
-                             "simbolo": {"color": "#d81e05"}},
+                            {
+                                "valor": 1,
+                                "etiqueta": "BT",
+                                "simbolo": {"color": "#1f6fb4"},
+                            },
+                            {
+                                "valor": 2,
+                                "etiqueta": "MT",
+                                "simbolo": {"color": "#d81e05"},
+                            },
                         ],
                     }
                 }
@@ -476,14 +500,18 @@ class StyleSheetTest(unittest.TestCase):
             }
         )
         style = sheet.style_for(
-            "Tramo", "Line", subtype_field="SUBTIPO",
+            "Tramo",
+            "Line",
+            subtype_field="SUBTIPO",
             subtype_categories=[(1, "Trifasico"), (2, "Monofasico"), (3, "Bifasico")],
         )
         renderer = style.renderer
         self.assertEqual(renderer.kind, Renderer.CATEGORIZED)
         self.assertEqual(renderer.field, "SUBTIPO")
-        self.assertEqual([c.label for c in renderer.categories],
-                         ["Trifasico", "Monofasico", "Bifasico"])
+        self.assertEqual(
+            [c.label for c in renderer.categories],
+            ["Trifasico", "Monofasico", "Bifasico"],
+        )
         colors = [c.symbol.layers[0].get("color").to_hex() for c in renderer.categories]
         self.assertEqual(colors, ["#aa0000", "#00aa00", "#aa0000"])
 
@@ -500,7 +528,9 @@ class StyleSheetTest(unittest.TestCase):
             }
         )
         renderer = sheet.style_for(
-            "Tramo", "Line", subtype_field="SUBTIPO",
+            "Tramo",
+            "Line",
+            subtype_field="SUBTIPO",
             subtype_categories=[(1, "A"), (2, "B")],
         ).renderer
         self.assertEqual(
@@ -525,7 +555,11 @@ class StyleSheetTest(unittest.TestCase):
                         "campo": "POTENCIA",
                         "intervalos": [
                             {"desde": 0, "hasta": 25, "simbolo": {"color": "#00ff00"}},
-                            {"desde": 25, "hasta": 100, "simbolo": {"color": "#ff0000"}},
+                            {
+                                "desde": 25,
+                                "hasta": 100,
+                                "simbolo": {"color": "#ff0000"},
+                            },
                         ],
                     }
                 },
@@ -533,8 +567,11 @@ class StyleSheetTest(unittest.TestCase):
                     "simbologia": {
                         "tipo": "reglas",
                         "reglas": [
-                            {"expresion": '"FASE" = 1', "etiqueta": "A",
-                             "simbolo": {"color": "#123456"}}
+                            {
+                                "expresion": '"FASE" = 1',
+                                "etiqueta": "A",
+                                "simbolo": {"color": "#123456"},
+                            }
                         ],
                     }
                 },
@@ -553,8 +590,12 @@ class StyleSheetTest(unittest.TestCase):
                     "escala_minima": 15000,
                     "opacidad": 0.5,
                     "simbologia": {"simbolo": {"color": "#111111"}},
-                    "etiqueta": {"campo": "CODIGO", "tamano": 9, "negrita": True,
-                                 "escala_minima": 2500},
+                    "etiqueta": {
+                        "campo": "CODIGO",
+                        "tamano": 9,
+                        "negrita": True,
+                        "escala_minima": 2500,
+                    },
                 }
             }
         )
@@ -592,20 +633,24 @@ class StyleSheetTest(unittest.TestCase):
     def test_color_en_forma_corta(self):
         sheet = self._sheet({"X": {"simbologia": {"simbolo": {"color": "#f00"}}}})
         self.assertEqual(
-            sheet.style_for("X", "Point").renderer.symbol.layers[0]
-            .get("color").to_hex(),
+            sheet.style_for("X", "Point")
+            .renderer.symbol.layers[0]
+            .get("color")
+            .to_hex(),
             "#ff0000",
         )
 
     def test_archivo_invalido(self):
         path = os.path.join(self.directory, "estilo.json")
         with io.open(path, "w", encoding="utf-8") as handle:
-            handle.write(u"[1, 2, 3]")
+            handle.write("[1, 2, 3]")
         with self.assertRaises(StyleSheetError):
             StyleSheet.load(path)
 
     def test_guardar_y_releer(self):
-        sheet = self._sheet({"Poste": {"simbologia": {"simbolo": {"color": "#123456"}}}})
+        sheet = self._sheet(
+            {"Poste": {"simbologia": {"simbolo": {"color": "#123456"}}}}
+        )
         path = os.path.join(self.directory, "estilo.json")
         sheet.save(path)
         again = StyleSheet.load(path)
@@ -639,8 +684,10 @@ class StyleSheetTest(unittest.TestCase):
         sheet = StyleSheet.load(path)
         self.assertTrue(sheet.knows("TramoDistribucionAereo"))
         style = sheet.style_for(
-            "TramoDistribucionAereo", "Line",
-            subtype_field="SUBTIPO", subtype_categories=[(1, "Trifasico")],
+            "TramoDistribucionAereo",
+            "Line",
+            subtype_field="SUBTIPO",
+            subtype_categories=[(1, "Trifasico")],
         )
         self.assertEqual(style.renderer.kind, Renderer.CATEGORIZED)
 
@@ -685,7 +732,9 @@ class DefaultsTest(unittest.TestCase):
 
     def test_subtipos_sin_estilo_declarado(self):
         style = symbology_defaults.build_style(
-            "X", "Point", subtype_field="SUBTIPO",
+            "X",
+            "Point",
+            subtype_field="SUBTIPO",
             subtype_categories=[(1, "A"), (2, "B")],
         )
         self.assertEqual(style.renderer.kind, Renderer.CATEGORIZED)
@@ -779,8 +828,14 @@ class ResolverTest(unittest.TestCase):
 
     def test_avisa_si_la_etiqueta_usa_un_campo_que_no_viaja(self):
         user = StyleSheet(
-            {"capas": {"Barra": {"etiqueta": {"campo": "NO_EXISTE"},
-                                 "simbologia": {"simbolo": {"color": "#fff"}}}}}
+            {
+                "capas": {
+                    "Barra": {
+                        "etiqueta": {"campo": "NO_EXISTE"},
+                        "simbologia": {"simbolo": {"color": "#fff"}},
+                    }
+                }
+            }
         )
         resolver = SymbologyResolver(stylesheet=user)
         style = resolver.style_for("Barra", "Line", field_names=["SUBTIPO"])

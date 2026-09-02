@@ -266,9 +266,7 @@ def _build_renderer(
                     symbol=build_symbol(entry.get("simbolo"), geometry_type),
                 )
             )
-        return Renderer(
-            Renderer.GRADUATED, field=field, ranges=ranges, source=SOURCE
-        )
+        return Renderer(Renderer.GRADUATED, field=field, ranges=ranges, source=SOURCE)
 
     categories = []
     for entry in definition.get("categorias") or []:
@@ -319,9 +317,7 @@ def _build_subtype_renderer(
             # Se pidio clasificar por subtipo pero no se declaro ningun color:
             # dibujarlos todos iguales seria lo mismo que no clasificar, asi
             # que se reparten los de la paleta automatica.
-            symbol_definition["color"] = defaults.color_for(
-                layer_name, index * 3 + 1
-            )
+            symbol_definition["color"] = defaults.color_for(layer_name, index * 3 + 1)
         symbol_definition.update(overrides.get(_text(code), {}))
         categories.append(
             Category(

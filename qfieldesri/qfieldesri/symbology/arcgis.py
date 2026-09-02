@@ -240,8 +240,7 @@ def _read_from_mapping(arcpy, layer, name, result):
                     Range(
                         lower=breaks[index],
                         upper=breaks[index + 1],
-                        label=label
-                        or "%s - %s" % (breaks[index], breaks[index + 1]),
+                        label=label or "%s - %s" % (breaks[index], breaks[index + 1]),
                         symbol=defaults._symbol(
                             geometry_type,
                             None,

@@ -146,9 +146,10 @@ class SymbologyResolver(object):
             lowered = layer_name.lower()
             short = lowered.split(".")[-1]
             for name, candidate in self.imported.items():
-                if name.lower() in (lowered, short) or name.lower().split(".")[
-                    -1
-                ] == short:
+                if (
+                    name.lower() in (lowered, short)
+                    or name.lower().split(".")[-1] == short
+                ):
                     return candidate
         return style
 

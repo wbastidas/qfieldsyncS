@@ -207,8 +207,7 @@ def cmd_estilo(args):
             _out("")
             _out(
                 "Estilo escrito en %s (%d capas). Editelo y pasele "
-                "'--estilo %s' al empaquetar."
-                % (args.salida, len(sheet), args.salida)
+                "'--estilo %s' al empaquetar." % (args.salida, len(sheet), args.salida)
             )
         else:
             for name in sorted(sheet.layers):

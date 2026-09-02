@@ -262,9 +262,7 @@ def _read_unique_value(cim, result):
         default = _read_symbol_reference(cim.get("defaultSymbol"), result)
         if default is not None:
             # En el destino, la categoria de valor vacio hace de "resto".
-            categories.append(
-                Category("", cim.get("defaultLabel") or "Otros", default)
-            )
+            categories.append(Category("", cim.get("defaultLabel") or "Otros", default))
 
     return Renderer(
         Renderer.CATEGORIZED,
@@ -311,9 +309,7 @@ def _read_class_breaks(cim, result):
 
     if not ranges:
         return None
-    return Renderer(
-        Renderer.GRADUATED, field=field, ranges=ranges, source=SOURCE
-    )
+    return Renderer(Renderer.GRADUATED, field=field, ranges=ranges, source=SOURCE)
 
 
 # ----------------------------------------------------------------------

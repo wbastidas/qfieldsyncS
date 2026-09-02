@@ -24,11 +24,21 @@ if _HERE not in sys.path:
 
 from qfieldesri.core.checker import WorkspaceChecker  # noqa: E402
 from qfieldesri.core.config import LayerAction, PackagingConfig  # noqa: E402
-from qfieldesri.core.packager import Packager, load_manifest  # noqa: E402
+from qfieldesri.core.packager import (  # noqa: E402
+    Packager,
+    build_stylesheet,
+    load_manifest,
+)
 from qfieldesri.core.scope import Scope, ScopeKind, ScopeResolver  # noqa: E402
 from qfieldesri.core.synchronizer import ConflictPolicy, Synchronizer  # noqa: E402
 from qfieldesri.profiles import available_profiles, load_profile  # noqa: E402
 from qfieldesri.readers.arcpy_reader import ArcpyReader  # noqa: E402
+from qfieldesri.symbology import (  # noqa: E402
+    StyleSheet,
+    SymbologyResolver,
+    load_symbology,
+)
+from qfieldesri.symbology.arcgis import CURRENT as ACTIVE_DOCUMENT  # noqa: E402
 from qfieldesri.version import __version__  # noqa: E402
 
 
@@ -37,6 +47,19 @@ SCOPE_ALL = "Toda la geodatabase"
 
 #: Separador entre el codigo y su descripcion en los desplegables de valores.
 _CODE_SEPARATOR = " - "
+
+
+#: Opciones del desplegable "de donde sale la simbologia".
+SYMBOLOGY_AUTO = "Automatica (la decide qfieldESRI)"
+SYMBOLOGY_CURRENT = "La del mapa abierto ahora en ArcGIS"
+SYMBOLOGY_FOLDER = "Una carpeta de archivos de capa (.lyrx)"
+SYMBOLOGY_DOCUMENT = "Un documento de ArcGIS (.lyrx, .lyr, .mxd, .aprx)"
+SYMBOLOGY_MODES = [
+    SYMBOLOGY_AUTO,
+    SYMBOLOGY_CURRENT,
+    SYMBOLOGY_FOLDER,
+    SYMBOLOGY_DOCUMENT,
+]
 
 
 def _by_name(parameters):
@@ -140,6 +163,85 @@ def _list_layer_names(workspace):
         reader.close()
 
 
+def _symbology_parameters():
+    """Los cuatro parametros de simbologia, iguales en todas las herramientas.
+
+    ArcGIS no guarda la simbologia dentro de la geodatabase, sino en el mapa,
+    en un ``.lyr`` o en un ``.lyrx``. Por eso hace falta decir explicitamente
+    de donde sacarla; y si no se dice nada, qfieldESRI la resuelve solo.
+    """
+    mode = arcpy.Parameter(
+        displayName="De donde tomar la simbologia",
+        name="symbology_mode",
+        datatype="GPString",
+        parameterType="Optional",
+        direction="Input",
+        category="Simbologia",
+    )
+    mode.filter.type = "ValueList"
+    mode.filter.list = SYMBOLOGY_MODES
+    mode.value = SYMBOLOGY_AUTO
+
+    folder = arcpy.Parameter(
+        displayName="Carpeta con los archivos de capa (.lyrx)",
+        name="symbology_folder",
+        datatype="DEFolder",
+        parameterType="Optional",
+        direction="Input",
+        category="Simbologia",
+    )
+
+    document = arcpy.Parameter(
+        displayName="Documento de ArcGIS del que leer la simbologia",
+        name="symbology_document",
+        datatype="DEFile",
+        parameterType="Optional",
+        direction="Input",
+        category="Simbologia",
+    )
+    document.filter.list = ["lyrx", "lyr", "mxd", "aprx"]
+
+    style_file = arcpy.Parameter(
+        displayName="Archivo de estilo de qfieldESRI (manda sobre lo anterior)",
+        name="style_file",
+        datatype="DEFile",
+        parameterType="Optional",
+        direction="Input",
+        category="Simbologia",
+    )
+    style_file.filter.list = ["json"]
+
+    return [mode, folder, document, style_file]
+
+
+def _update_symbology_parameters(values):
+    """Habilita solo el campo que corresponde al modo elegido."""
+    mode = values["symbology_mode"].valueAsText or SYMBOLOGY_AUTO
+    values["symbology_folder"].enabled = mode == SYMBOLOGY_FOLDER
+    values["symbology_document"].enabled = mode == SYMBOLOGY_DOCUMENT
+
+
+def _check_symbology_parameters(values):
+    """Avisa de lo que falta antes de ejecutar."""
+    mode = values["symbology_mode"].valueAsText or SYMBOLOGY_AUTO
+    if mode == SYMBOLOGY_FOLDER and not values["symbology_folder"].valueAsText:
+        values["symbology_folder"].setIDMessage("ERROR", 530)
+    elif mode == SYMBOLOGY_DOCUMENT and not values["symbology_document"].valueAsText:
+        values["symbology_document"].setIDMessage("ERROR", 530)
+
+
+def _symbology_source(values):
+    """Traduce el modo elegido a lo que entiende ``load_symbology``."""
+    mode = values["symbology_mode"].valueAsText or SYMBOLOGY_AUTO
+    if mode == SYMBOLOGY_CURRENT:
+        return ACTIVE_DOCUMENT
+    if mode == SYMBOLOGY_FOLDER:
+        return values["symbology_folder"].valueAsText or ""
+    if mode == SYMBOLOGY_DOCUMENT:
+        return values["symbology_document"].valueAsText or ""
+    return ""
+
+
 def _aoi_to_wkt(feature_layer):
     """Une las entidades (o la seleccion) de una capa en un unico WKT."""
     if not feature_layer:
@@ -168,6 +270,7 @@ class Toolbox(object):
         )
         self.tools = [
             AnalizarGeodatabase,
+            PrepararSimbologia,
             EmpaquetarParaQField,
             SincronizarDesdeQField,
             PublicarEnQFieldCloud,
@@ -275,11 +378,122 @@ class AnalizarGeodatabase(object):
 
 
 # ----------------------------------------------------------------------
+class PrepararSimbologia(object):
+    """Simbologia de ArcGIS -> archivo de estilo de qfieldESRI."""
+
+    def __init__(self):
+        self.label = "2 · Preparar simbologia"
+        self.description = (
+            "Resuelve como se vera cada clase en QField y lo escribe en un "
+            "archivo de estilo legible: colores, formas, grosores, etiquetas y "
+            "escalas. Toma la simbologia del mapa abierto o de los archivos de "
+            "capa que se le indiquen, y para lo que no encuentre aplica un "
+            "criterio automatico. El archivo se edita a mano y se pasa a la "
+            "herramienta de empaquetado. No modifica la geodatabase."
+        )
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        workspace = arcpy.Parameter(
+            displayName="Geodatabase de origen",
+            name="workspace",
+            datatype="DEWorkspace",
+            parameterType="Required",
+            direction="Input",
+        )
+        profile = arcpy.Parameter(
+            displayName="Perfil de modelo de datos",
+            name="profile",
+            datatype="GPString",
+            parameterType="Optional",
+            direction="Input",
+        )
+        profile.filter.type = "ValueList"
+        profile.filter.list = available_profiles()
+        profile.value = "cnel_ep"
+
+        output = arcpy.Parameter(
+            displayName="Archivo de estilo a escribir (.json)",
+            name="style_out",
+            datatype="DEFile",
+            parameterType="Required",
+            direction="Output",
+        )
+        output.filter.list = ["json"]
+
+        parameters = [workspace, profile, output]
+        parameters.extend(_symbology_parameters())
+        return parameters
+
+    def updateParameters(self, parameters):
+        _update_symbology_parameters(_by_name(parameters))
+        return
+
+    def updateMessages(self, parameters):
+        _check_symbology_parameters(_by_name(parameters))
+        return
+
+    def execute(self, parameters, messages):  # noqa: ARG002
+        values = _by_name(parameters)
+        workspace_path = values["workspace"].valueAsText
+        destination = values["style_out"].valueAsText
+
+        imported = {}
+        source = _symbology_source(values)
+        if source:
+            imported, warnings = load_symbology(source)
+            arcpy.AddMessage(
+                "Simbologia importada de ArcGIS: %d capas." % len(imported)
+            )
+            for warning in warnings:
+                arcpy.AddWarning(warning)
+
+        base = None
+        if values["style_file"].valueAsText:
+            base = StyleSheet.load(values["style_file"].valueAsText)
+
+        reader = _open_reader(workspace_path)
+        try:
+            workspace = reader.describe_workspace()
+            resolver = SymbologyResolver(
+                profile=load_profile(values["profile"].valueAsText),
+                stylesheet=base,
+                imported=imported,
+            )
+            sheet = build_stylesheet(
+                workspace,
+                resolver,
+                description=(
+                    "Estilos de qfieldESRI para %s. Edite colores, formas, "
+                    "etiquetas y escalas, y pase este archivo en el apartado "
+                    "Simbologia al empaquetar." % workspace.path
+                ),
+            )
+            sheet.save(destination)
+        finally:
+            reader.close()
+
+        for warning in resolver.warnings:
+            arcpy.AddWarning(warning)
+        arcpy.AddMessage("")
+        for name in sorted(sheet.layers):
+            arcpy.AddMessage(
+                "  %-40s %s" % (name, resolver.sources.get(name, ""))
+            )
+        arcpy.AddMessage("")
+        arcpy.AddMessage(resolver.summary())
+        arcpy.AddMessage(
+            "Estilo escrito en %s (%d capas). Editelo y paselo a la "
+            "herramienta 3." % (destination, len(sheet))
+        )
+
+
+# ----------------------------------------------------------------------
 class EmpaquetarParaQField(object):
     """Geodatabase -> carpeta de proyecto de QField."""
 
     def __init__(self):
-        self.label = "2 - Empaquetar para QField"
+        self.label = "3 · Empaquetar para QField"
         self.description = (
             "Genera la carpeta que se copia al dispositivo: un GeoPackage con "
             "los datos y el proyecto con los formularios, dominios, subtipos y "
@@ -456,7 +670,7 @@ class EmpaquetarParaQField(object):
             direction="Output",
             category="Opciones avanzadas",
         )
-        return [
+        parameters = [
             workspace,
             output,
             name,
@@ -476,6 +690,8 @@ class EmpaquetarParaQField(object):
             force,
             config_out,
         ]
+        parameters.extend(_symbology_parameters())
+        return parameters
 
     # -- comportamiento del dialogo ------------------------------------
     def updateParameters(self, parameters):
@@ -492,6 +708,8 @@ class EmpaquetarParaQField(object):
             names = _list_layer_names(workspace)
             for key in ("layers", "read_only", "scope_present_in"):
                 values[key].filter.list = names
+
+        _update_symbology_parameters(values)
 
         kind = _scope_kind_from_label(values["scope_kind"].valueAsText)
         is_polygon = kind == ScopeKind.POLIGONO
@@ -515,6 +733,7 @@ class EmpaquetarParaQField(object):
 
     def updateMessages(self, parameters):
         values = _by_name(parameters)
+        _check_symbology_parameters(values)
         kind = _scope_kind_from_label(values["scope_kind"].valueAsText)
         if kind == ScopeKind.POLIGONO and not values["scope_polygon"].valueAsText:
             values["scope_polygon"].setIDMessage("ERROR", 530)
@@ -541,6 +760,8 @@ class EmpaquetarParaQField(object):
             include_related_tables=bool(values["include_related"].value),
             big_domain_threshold=int(values["threshold"].value or 40),
             scope=self._scope(values),
+            symbology_source=_symbology_source(values),
+            style_file=values["style_file"].valueAsText or "",
         )
 
         reader = _open_reader(workspace)
@@ -590,6 +811,11 @@ class EmpaquetarParaQField(object):
             arcpy.AddMessage(
                 "  %-40s %8d entidades" % ("TOTAL", packaging.total_features)
             )
+            if packaging.symbology_description:
+                arcpy.AddMessage("")
+                arcpy.AddMessage(packaging.symbology_description)
+            for warning in packaging.warnings:
+                arcpy.AddWarning(warning)
             if packaging.total_features == 0:
                 arcpy.AddWarning(
                     "El paquete salio vacio: revise el ambito elegido."
@@ -597,7 +823,7 @@ class EmpaquetarParaQField(object):
             arcpy.AddMessage("")
             arcpy.AddMessage(
                 "Copie la carpeta completa al dispositivo (o publiquela con la "
-                "herramienta 4) y abra el proyecto desde QField."
+                "herramienta 5) y abra el proyecto desde QField."
             )
 
             if values["config_out"].valueAsText:
@@ -631,7 +857,7 @@ class SincronizarDesdeQField(object):
     """Carpeta de QField -> geodatabase."""
 
     def __init__(self):
-        self.label = "3 · Sincronizar desde QField"
+        self.label = "4 · Sincronizar desde QField"
         self.description = (
             "Compara lo que vuelve del dispositivo con la linea base guardada "
             "al empaquetar y aplica altas, modificaciones y (si se pide) bajas "
@@ -755,7 +981,7 @@ class SincronizarDesdeQField(object):
 # ----------------------------------------------------------------------
 class PublicarEnQFieldCloud(object):
     def __init__(self):
-        self.label = "4 · Publicar en QFieldCloud"
+        self.label = "5 · Publicar en QFieldCloud"
         self.description = (
             "Sube el paquete a QFieldCloud para que los equipos de campo lo "
             "descarguen sin cable."
@@ -830,7 +1056,7 @@ class PublicarEnQFieldCloud(object):
 # ----------------------------------------------------------------------
 class RecuperarDeQFieldCloud(object):
     def __init__(self):
-        self.label = "5 · Recuperar de QFieldCloud"
+        self.label = "6 · Recuperar de QFieldCloud"
         self.description = (
             "Descarga lo capturado en campo desde QFieldCloud a una carpeta "
             "local, lista para la herramienta de sincronizacion."
@@ -904,5 +1130,5 @@ class RecuperarDeQFieldCloud(object):
         )
         arcpy.AddMessage("Archivos descargados: %d" % len(downloaded))
         arcpy.AddMessage(
-            "Ahora ejecute '3 · Sincronizar desde QField' sobre esa carpeta."
+            "Ahora ejecute '4 · Sincronizar desde QField' sobre esa carpeta."
         )

@@ -30,6 +30,15 @@ import json
 import uuid
 import xml.etree.ElementTree as ET
 
+from ..symbology.model import (
+    FillStyle,
+    LineStyle,
+    MarkerShape,
+    Renderer,
+    Symbol,
+    SymbolLayer,
+)
+
 PROJECT_FORMAT_VERSION = "3.40.0-Bratislava"
 
 #: Paleta de apoyo para el renderizado por subtipo (colores distinguibles en
@@ -184,6 +193,7 @@ class LayerSpec(object):
         subtype_categories=None,
         color_index=0,
         layer_id=None,
+        style=None,
     ):
         self.table = table
         self.title = title or table
@@ -205,6 +215,9 @@ class LayerSpec(object):
         #: lista de ``(codigo, etiqueta)`` para el renderizado categorizado
         self.subtype_categories = list(subtype_categories or [])
         self.color_index = color_index
+        #: :class:`~qfieldesri.symbology.model.LayerStyle` con la simbologia,
+        #: el etiquetado y la visibilidad por escala de la capa
+        self.style = style
         self.id = layer_id or "%s_%s" % (
             _sanitize_id(table),
             uuid.uuid4().hex[:16],
@@ -251,6 +264,128 @@ class RelationSpec(object):
         #: ``Association`` o ``Composition`` (borrado en cascada en QField)
         self.strength = strength
         self.id = "%s_%s" % (_sanitize_id(name), uuid.uuid4().hex[:8])
+
+
+# ----------------------------------------------------------------------
+# traduccion de cada capa de simbolo al formato del proyecto
+# ----------------------------------------------------------------------
+def _marker_options(symbol_layer):
+    outline_width = symbol_layer.get("outline_width", 0.2)
+    return "SimpleMarker", {
+        "name": symbol_layer.get("shape", MarkerShape.CIRCLE),
+        "color": _color_text(symbol_layer.get("color")),
+        "outline_color": _color_text(symbol_layer.get("outline_color")),
+        # Un grosor de cero con estilo 'solid' se dibuja como una linea de un
+        # pixel; para que no haya borde hay que decirlo con el estilo.
+        "outline_style": "solid" if outline_width else "no",
+        "outline_width": "%g" % outline_width,
+        "outline_width_unit": "MM",
+        "size": "%g" % symbol_layer.get("size", 2.6),
+        "size_unit": "MM",
+        "angle": "%g" % symbol_layer.get("angle", 0),
+        "offset": "0,0",
+        "offset_unit": "MM",
+        "scale_method": "diameter",
+        "horizontal_anchor_point": "1",
+        "vertical_anchor_point": "1",
+        "joinstyle": "bevel",
+        "cap_style": "square",
+    }
+
+
+def _line_options(symbol_layer):
+    custom_dash = symbol_layer.get("custom_dash")
+    options = {
+        "line_color": _color_text(symbol_layer.get("color")),
+        "line_style": symbol_layer.get("style", LineStyle.SOLID),
+        "line_width": "%g" % symbol_layer.get("width", 0.66),
+        "line_width_unit": "MM",
+        "capstyle": "square",
+        "joinstyle": "bevel",
+        "offset": "0",
+        "offset_unit": "MM",
+        "use_custom_dash": "1" if custom_dash else "0",
+        "align_dash_pattern": "0",
+        "dash_pattern_offset": "0",
+        "dash_pattern_offset_unit": "MM",
+        "tweak_dash_pattern_on_corners": "0",
+        "trim_distance_start": "0",
+        "trim_distance_end": "0",
+        "draw_inside_polygon": "0",
+        "ring_filter": "0",
+    }
+    if custom_dash:
+        options["customdash"] = custom_dash
+        options["customdash_unit"] = "MM"
+    return "SimpleLine", options
+
+
+def _fill_options(symbol_layer):
+    outline_width = symbol_layer.get("outline_width", 0.4)
+    return "SimpleFill", {
+        "color": _color_text(symbol_layer.get("color")),
+        "style": symbol_layer.get("style", FillStyle.SOLID),
+        "outline_color": _color_text(symbol_layer.get("outline_color")),
+        "outline_style": "solid" if outline_width else "no",
+        "outline_width": "%g" % outline_width,
+        "outline_width_unit": "MM",
+        "joinstyle": "bevel",
+        "offset": "0,0",
+        "offset_unit": "MM",
+    }
+
+
+def _marker_line_options(symbol_layer):
+    """Marcadores repetidos sobre la linea: la flecha de sentido del flujo."""
+    return "MarkerLine", {
+        "placements": symbol_layer.get("placement", "Interval"),
+        "interval": "%g" % symbol_layer.get("interval", 14.0),
+        "interval_unit": "MM",
+        # Girar el marcador con la linea es lo que convierte un triangulo en
+        # una flecha que indica el sentido.
+        "rotate": "1" if symbol_layer.get("rotate", True) else "0",
+        "offset": "0",
+        "offset_unit": "MM",
+        "offset_along_line": "0",
+        "offset_along_line_unit": "MM",
+        "average_angle_length": "4",
+        "average_angle_unit": "MM",
+        "ring_filter": "0",
+        "place_on_every_part": "1",
+    }
+
+
+def _color_text(color):
+    if color is None:
+        return "0,0,0,255"
+    return color.to_qgis()
+
+
+def _fallback_symbol(geometry_type):
+    """Simbolo minimo para una capa sin estilo, para no dejarla invisible."""
+    if geometry_type == "Line":
+        return Symbol.line("#646464")
+    if geometry_type == "Polygon":
+        return Symbol.fill("#64646450", outline_color="#646464")
+    return Symbol.marker("#646464")
+
+
+def _value_type(value):
+    """Tipo que declara una categoria del renderizador."""
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int):
+        return "long"
+    if isinstance(value, float):
+        return "double"
+    return "QString"
+
+
+def _scale_text(value, default):
+    """Denominador de escala tal como lo espera el proyecto."""
+    if not value:
+        return default
+    return "%g" % float(value)
 
 
 def _sanitize_id(name):
@@ -527,19 +662,29 @@ class QFieldProjectWriter(object):
 
     # -- capas ----------------------------------------------------------
     def _write_maplayer(self, parent, layer):
+        style = layer.style
+        has_scale = bool(style is not None and style.has_scale_limits)
+        labels_enabled = bool(
+            style is not None
+            and style.label is not None
+            and style.label.enabled
+            and style.label.text
+        )
         attributes = {
             "type": "vector",
             "styleCategories": "AllStyleCategories",
             "readOnly": "1" if layer.read_only else "0",
-            "hasScaleBasedVisibilityFlag": "0",
-            "minScale": "1e+08",
-            "maxScale": "0",
+            "hasScaleBasedVisibilityFlag": "1" if has_scale else "0",
+            # En este formato ``minScale`` es el denominador mas alejado en el
+            # que la capa sigue viendose, y ``maxScale`` el mas cercano.
+            "minScale": _scale_text(style.min_scale if style else 0, "1e+08"),
+            "maxScale": _scale_text(style.max_scale if style else 0, "0"),
             "simplifyDrawingHints": "1" if layer.geometry_type != "Point" else "0",
             "simplifyDrawingTol": "1",
             "simplifyAlgorithm": "0",
             "simplifyLocal": "1",
             "simplifyMaxScale": "1",
-            "labelsEnabled": "0",
+            "labelsEnabled": "1" if labels_enabled else "0",
             "autoRefreshTime": "0",
             "autoRefreshMode": "Disabled",
             "refreshOnNotifyEnabled": "0",
@@ -570,12 +715,13 @@ class QFieldProjectWriter(object):
 
         if layer.is_spatial:
             self._write_renderer(element, layer)
-            ET.SubElement(element, "labeling", {"type": "simple"})
+            self._write_labeling(element, layer)
             blend = ET.SubElement(element, "blendMode")
             blend.text = "0"
             feature_blend = ET.SubElement(element, "featureBlendMode")
             feature_blend.text = "0"
-            ET.SubElement(element, "layerOpacity").text = "1"
+            opacity = style.opacity if style is not None else 1.0
+            ET.SubElement(element, "layerOpacity").text = "%g" % opacity
 
         self._write_field_configuration(element, layer)
         self._write_aliases(element, layer)
@@ -627,134 +773,267 @@ class QFieldProjectWriter(object):
         return properties
 
     def _write_renderer(self, parent, layer):
-        if layer.subtype_field and layer.subtype_categories:
-            self._write_categorized_renderer(parent, layer)
-        else:
-            renderer = ET.SubElement(
-                parent,
-                "renderer-v2",
-                {
-                    "type": "singleSymbol",
-                    "forceraster": "0",
-                    "symbollevels": "0",
-                    "enableorderby": "0",
-                    "referencescale": "-1",
-                },
+        """Escribe el renderizador de la capa a partir de su estilo."""
+        renderer = layer.style.renderer if layer.style is not None else None
+        if renderer is None:
+            renderer = Renderer(
+                Renderer.SINGLE, symbol=_fallback_symbol(layer.geometry_type)
             )
-            symbols = ET.SubElement(renderer, "symbols")
-            self._write_symbol(symbols, "0", layer.geometry_type, layer.color_index)
 
-    def _write_categorized_renderer(self, parent, layer):
-        renderer = ET.SubElement(
-            parent,
-            "renderer-v2",
-            {
-                "type": "categorizedSymbol",
-                "attr": layer.subtype_field,
-                "forceraster": "0",
-                "symbollevels": "0",
-                "enableorderby": "0",
-                "referencescale": "-1",
-            },
+        if renderer.kind == Renderer.NULL:
+            ET.SubElement(parent, "renderer-v2", {"type": "nullSymbol"})
+            return
+
+        writers = {
+            Renderer.CATEGORIZED: self._write_categorized_renderer,
+            Renderer.GRADUATED: self._write_graduated_renderer,
+            Renderer.RULE_BASED: self._write_rule_renderer,
+        }
+        writers.get(renderer.kind, self._write_single_renderer)(
+            parent, renderer, layer
         )
-        categories = ET.SubElement(renderer, "categories")
-        symbols = ET.SubElement(renderer, "symbols")
-        for index, (code, label) in enumerate(layer.subtype_categories):
+
+    def _renderer_element(self, parent, renderer_type, extra=None):
+        attributes = {
+            "type": renderer_type,
+            "forceraster": "0",
+            "symbollevels": "0",
+            "enableorderby": "0",
+            "referencescale": "-1",
+        }
+        attributes.update(extra or {})
+        return ET.SubElement(parent, "renderer-v2", attributes)
+
+    def _write_single_renderer(self, parent, renderer, layer):
+        element = self._renderer_element(parent, "singleSymbol")
+        symbols = ET.SubElement(element, "symbols")
+        symbol = renderer.symbol or _fallback_symbol(layer.geometry_type)
+        self._write_symbol(symbols, "0", symbol)
+
+    def _write_categorized_renderer(self, parent, renderer, layer):
+        element = self._renderer_element(
+            parent, "categorizedSymbol", {"attr": renderer.field or ""}
+        )
+        categories = ET.SubElement(element, "categories")
+        symbols = ET.SubElement(element, "symbols")
+        for index, category in enumerate(renderer.categories):
             ET.SubElement(
                 categories,
                 "category",
                 {
-                    "render": "true",
-                    "value": _text(code),
-                    "label": _text(label),
+                    "render": "true" if category.render else "false",
+                    "value": _text(category.value),
+                    "label": _text(category.label),
                     "symbol": str(index),
-                    "type": "long",
+                    "type": _value_type(category.value),
                     "uuid": str(uuid.uuid4()),
                 },
             )
-            self._write_symbol(
-                symbols, str(index), layer.geometry_type, layer.color_index + index
-            )
-        source_symbol = ET.SubElement(renderer, "source-symbol")
-        self._write_symbol(source_symbol, "0", layer.geometry_type, layer.color_index)
+            self._write_symbol(symbols, str(index), category.symbol)
+        source = ET.SubElement(element, "source-symbol")
+        first = renderer.categories[0].symbol if renderer.categories else None
+        self._write_symbol(source, "0", first or _fallback_symbol(layer.geometry_type))
 
-    def _write_symbol(self, parent, name, geometry_type, color_index):
-        symbol_type = {
-            "Point": "marker",
-            "Line": "line",
-            "Polygon": "fill",
-        }.get(geometry_type, "marker")
-        symbol = ET.SubElement(
+    def _write_graduated_renderer(self, parent, renderer, layer):
+        element = self._renderer_element(
+            parent,
+            "graduatedSymbol",
+            {"attr": renderer.field or "", "graduatedMethod": "GraduatedColor"},
+        )
+        ranges = ET.SubElement(element, "ranges")
+        symbols = ET.SubElement(element, "symbols")
+        for index, item in enumerate(renderer.ranges):
+            ET.SubElement(
+                ranges,
+                "range",
+                {
+                    "render": "true" if item.render else "false",
+                    "lower": "%f" % float(item.lower or 0),
+                    "upper": "%f" % float(item.upper or 0),
+                    "label": _text(item.label),
+                    "symbol": str(index),
+                    "uuid": str(uuid.uuid4()),
+                },
+            )
+            self._write_symbol(symbols, str(index), item.symbol)
+        source = ET.SubElement(element, "source-symbol")
+        first = renderer.ranges[0].symbol if renderer.ranges else None
+        self._write_symbol(source, "0", first or _fallback_symbol(layer.geometry_type))
+
+    def _write_rule_renderer(self, parent, renderer, layer):
+        element = self._renderer_element(parent, "RuleRenderer")
+        rules = ET.SubElement(element, "rules", {"key": "{%s}" % uuid.uuid4()})
+        symbols = ET.SubElement(element, "symbols")
+        for index, rule in enumerate(renderer.rules):
+            attributes = {
+                "key": "{%s}" % uuid.uuid4(),
+                "symbol": str(index),
+                "label": _text(rule.label),
+                "filter": rule.expression or "",
+            }
+            if rule.min_scale:
+                attributes["scalemindenom"] = str(int(rule.max_scale or 0))
+                attributes["scalemaxdenom"] = str(int(rule.min_scale))
+            ET.SubElement(rules, "rule", attributes)
+            self._write_symbol(symbols, str(index), rule.symbol)
+        _ = layer
+
+    # -- simbolos -------------------------------------------------------
+    def _write_symbol(self, parent, name, symbol):
+        """Serializa un simbolo con todas sus capas."""
+        if symbol is None:
+            symbol = _fallback_symbol("Point")
+        element = ET.SubElement(
             parent,
             "symbol",
             {
                 "name": name,
-                "type": symbol_type,
-                "alpha": "1",
+                "type": symbol.symbol_type,
+                "alpha": "%g" % symbol.opacity,
                 "clip_to_extent": "1",
                 "force_rhr": "0",
                 "frame_rate": "10",
                 "is_animated": "0",
             },
         )
-        if symbol_type == "marker":
-            layer_class, options = (
-                "SimpleMarker",
-                {
-                    "name": "circle",
-                    "color": _color(color_index),
-                    "outline_color": "35,35,35,255",
-                    "outline_style": "solid",
-                    "outline_width": "0.2",
-                    "outline_width_unit": "MM",
-                    "size": "2.6",
-                    "size_unit": "MM",
-                    "angle": "0",
-                    "offset": "0,0",
-                    "offset_unit": "MM",
-                    "scale_method": "diameter",
-                    "horizontal_anchor_point": "1",
-                    "vertical_anchor_point": "1",
-                    "joinstyle": "bevel",
-                },
-            )
-        elif symbol_type == "line":
-            layer_class, options = (
-                "SimpleLine",
-                {
-                    "line_color": _color(color_index),
-                    "line_style": "solid",
-                    "line_width": "0.66",
-                    "line_width_unit": "MM",
-                    "capstyle": "square",
-                    "joinstyle": "bevel",
-                    "offset": "0",
-                    "offset_unit": "MM",
-                    "use_custom_dash": "0",
-                },
-            )
-        else:
-            layer_class, options = (
-                "SimpleFill",
-                {
-                    "color": _color(color_index, 100),
-                    "style": "solid",
-                    "outline_color": _color(color_index),
-                    "outline_style": "solid",
-                    "outline_width": "0.4",
-                    "outline_width_unit": "MM",
-                    "joinstyle": "bevel",
-                    "offset": "0,0",
-                    "offset_unit": "MM",
-                },
-            )
-        symbol_layer = ET.SubElement(
-            symbol,
+        for index, layer in enumerate(symbol.layers):
+            self._write_symbol_layer(element, layer, "%s@%s" % (name, index))
+        return element
+
+    def _write_symbol_layer(self, parent, symbol_layer, nested_name):
+        builder = {
+            SymbolLayer.MARKER: _marker_options,
+            SymbolLayer.LINE: _line_options,
+            SymbolLayer.FILL: _fill_options,
+            SymbolLayer.MARKER_LINE: _marker_line_options,
+        }.get(symbol_layer.kind)
+        if builder is None:  # pragma: no cover - tipo desconocido
+            return None
+
+        layer_class, options = builder(symbol_layer)
+        element = ET.SubElement(
+            parent,
             "layer",
             {"class": layer_class, "enabled": "1", "locked": "0", "pass": "0"},
         )
-        _option_value(symbol_layer, options)
-        return symbol
+        _option_value(element, options)
+
+        if symbol_layer.kind == SymbolLayer.MARKER_LINE:
+            # El marcador que se repite va anidado dentro de la capa, con el
+            # nombre que espera el formato: ``@<simbolo>@<indice>``.
+            marker = symbol_layer.get("marker")
+            if marker is not None:
+                self._write_symbol(element, "@%s" % nested_name, marker)
+        return element
+
+    # -- etiquetado -----------------------------------------------------
+    def _write_labeling(self, parent, layer):
+        """Escribe el etiquetado, que es lo que hace util el mapa en campo."""
+        label = layer.style.label if layer.style is not None else None
+        if label is None or not label.text:
+            ET.SubElement(parent, "labeling", {"type": "simple"})
+            return
+
+        labeling = ET.SubElement(parent, "labeling", {"type": "simple"})
+        settings = ET.SubElement(labeling, "settings", {"calloutType": "simple"})
+
+        text_style = ET.SubElement(
+            settings,
+            "text-style",
+            {
+                "fieldName": label.text,
+                "isExpression": "1" if label.is_expression else "0",
+                "fontFamily": label.font_family,
+                "fontSize": "%g" % label.size,
+                "fontSizeUnit": "Point",
+                "fontWeight": "75" if label.bold else "50",
+                "fontItalic": "1" if label.italic else "0",
+                "fontUnderline": "0",
+                "fontStrikeout": "0",
+                "textColor": label.color.to_qgis(),
+                "textOpacity": "1",
+                "blendMode": "0",
+                "multilineHeight": "1",
+                "allowHtml": "0",
+                "capitalization": "0",
+                "namedStyle": "Bold" if label.bold else "Regular",
+                "legendString": "Aa",
+            },
+        )
+        ET.SubElement(text_style, "families")
+        # Sin halo, una etiqueta oscura sobre una ortofoto oscura no se lee.
+        ET.SubElement(
+            text_style,
+            "text-buffer",
+            {
+                "bufferDraw": "1" if label.buffer_size else "0",
+                "bufferSize": "%g" % (label.buffer_size or 0),
+                "bufferSizeUnits": "MM",
+                "bufferColor": label.buffer_color.to_qgis(),
+                "bufferOpacity": "1",
+                "bufferJoinStyle": "128",
+                "bufferNoFill": "1",
+                "bufferBlendMode": "0",
+            },
+        )
+        ET.SubElement(text_style, "text-mask")
+        ET.SubElement(text_style, "background", {"shapeDraw": "0"})
+        ET.SubElement(text_style, "shadow", {"shadowDraw": "0"})
+        _option_map(text_style, "dd_properties", {})
+        ET.SubElement(text_style, "substitutions")
+
+        ET.SubElement(
+            settings,
+            "text-format",
+            {
+                "wrapChar": "",
+                "autoWrapLength": "0",
+                "useMaxLineLengthForAutoWrap": "1",
+                "multilineAlign": "3",
+                "addDirectionSymbol": "0",
+                "formatNumbers": "0",
+                "decimals": "3",
+                "plussign": "0",
+            },
+        )
+        ET.SubElement(
+            settings,
+            "placement",
+            {
+                "placement": str(label.placement_for(layer.geometry_type)),
+                "placementFlags": "10",
+                "dist": "%g" % label.offset,
+                "distUnits": "MM",
+                "offsetType": "0",
+                "quadOffset": "4",
+                "xOffset": "0",
+                "yOffset": "0",
+                "rotationAngle": "0",
+                "preserveRotation": "1",
+                "overrunDistance": "0",
+                "lineAnchorPercent": "0.5",
+                "lineAnchorType": "0",
+            },
+        )
+        has_scale = bool(label.min_scale or label.max_scale)
+        ET.SubElement(
+            settings,
+            "rendering",
+            {
+                "drawLabels": "1",
+                "scaleVisibility": "1" if has_scale else "0",
+                "scaleMin": str(int(label.max_scale or 0)),
+                "scaleMax": str(int(label.min_scale or 0)),
+                "labelPerPart": "0",
+                "mergeLines": "1" if layer.geometry_type == "Line" else "0",
+                "obstacle": "1",
+                "obstacleFactor": "1",
+                "upsidedownLabels": "0",
+                "displayAll": "0",
+            },
+        )
+        _option_map(settings, "dd_properties", {})
+        ET.SubElement(settings, "callout", {"type": "simple"})
 
     def _write_field_configuration(self, parent, layer):
         configuration = ET.SubElement(parent, "fieldConfiguration")

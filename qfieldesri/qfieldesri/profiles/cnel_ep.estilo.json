@@ -1,0 +1,491 @@
+{
+  "capas": {
+    "Barra": {
+      "simbologia": {
+        "campo": "SUBTIPO",
+        "categorias": [
+          {
+            "etiqueta": "Barra baja tension",
+            "simbolo": {
+              "ancho": 1.4,
+              "color": "#1f6fb4"
+            },
+            "valor": 1
+          },
+          {
+            "etiqueta": "Barra media tension",
+            "simbolo": {
+              "ancho": 1.4,
+              "color": "#d81e05"
+            },
+            "valor": 2
+          },
+          {
+            "etiqueta": "Barra subtransmision",
+            "simbolo": {
+              "ancho": 1.8,
+              "color": "#2b2b2b"
+            },
+            "valor": 3
+          }
+        ],
+        "tipo": "categorizado"
+      }
+    },
+    "Electrico_RedGeom_Junctions": {
+      "escala_minima": 3000,
+      "simbologia": {
+        "simbolo": {
+          "borde_ancho": 0,
+          "color": "#bdbdbd",
+          "forma": "circulo",
+          "tamano": 1.2
+        },
+        "tipo": "simple"
+      },
+      "visible": false
+    },
+    "EstructuraANivel": {
+      "escala_minima": 12000,
+      "simbologia": {
+        "simbolo": {
+          "borde_ancho": 0.25,
+          "borde_color": "#3e2723",
+          "color": "#795548",
+          "forma": "cuadrado",
+          "tamano": 2.4
+        },
+        "tipo": "simple"
+      }
+    },
+    "EstructuraSoporte": {
+      "escala_minima": 15000,
+      "etiqueta": {
+        "campo": "CODIGOESTRUCTURA",
+        "escala_minima": 2500,
+        "halo": 1.0,
+        "tamano": 7.5
+      },
+      "simbologia": {
+        "colores": [
+          "#6d6d6d",
+          "#8d6e63",
+          "#78909c",
+          "#a1887f",
+          "#90a4ae",
+          "#5d4037"
+        ],
+        "simbolo": {
+          "borde_ancho": 0.2,
+          "borde_color": "#2b2b2b",
+          "forma": "circulo",
+          "tamano": 1.8
+        },
+        "tipo": "subtipos"
+      }
+    },
+    "Generador": {
+      "etiqueta": {
+        "campo": "TEXTOETIQUETA",
+        "escala_minima": 25000
+      },
+      "simbologia": {
+        "simbolo": {
+          "borde_ancho": 0.3,
+          "borde_color": "#004d40",
+          "color": "#00897b",
+          "forma": "hexagono",
+          "tamano": 3.6
+        },
+        "tipo": "simple"
+      }
+    },
+    "GeneradorDistribuido": {
+      "escala_minima": 12000,
+      "simbologia": {
+        "simbolo": {
+          "borde_ancho": 0.25,
+          "borde_color": "#004d40",
+          "color": "#26a69a",
+          "forma": "hexagono",
+          "tamano": 2.8
+        },
+        "tipo": "simple"
+      }
+    },
+    "Luminaria": {
+      "escala_minima": 8000,
+      "simbologia": {
+        "simbolo": {
+          "borde_ancho": 0.2,
+          "borde_color": "#7c5c00",
+          "color": "#ffd400",
+          "forma": "estrella",
+          "tamano": 2.4
+        },
+        "tipo": "simple"
+      }
+    },
+    "Pararrayos": {
+      "escala_minima": 8000,
+      "simbologia": {
+        "simbolo": {
+          "borde_ancho": 0.2,
+          "borde_color": "#7c2d12",
+          "color": "#ff5722",
+          "forma": "triangulo",
+          "tamano": 2.2
+        },
+        "tipo": "simple"
+      }
+    },
+    "PuestoCorrectorFactorPotencia": {
+      "etiqueta": {
+        "campo": "TEXTOETIQUETA",
+        "escala_minima": 12000
+      },
+      "simbologia": {
+        "simbolo": {
+          "borde_ancho": 0.3,
+          "borde_color": "#00504a",
+          "color": "#00968a",
+          "forma": "hexagono",
+          "tamano": 3.2
+        },
+        "tipo": "simple"
+      }
+    },
+    "PuestoProteccionBajaTension": {
+      "escala_minima": 12000,
+      "simbologia": {
+        "simbolo": {
+          "borde_ancho": 0.25,
+          "borde_color": "#0b3c66",
+          "color": "#1f6fb4",
+          "forma": "rombo",
+          "tamano": 2.6
+        },
+        "tipo": "simple"
+      }
+    },
+    "PuestoProteccionDinamico": {
+      "etiqueta": {
+        "campo": "TEXTOETIQUETA",
+        "escala_minima": 25000,
+        "halo": 1.2,
+        "negrita": true
+      },
+      "simbologia": {
+        "colores": [
+          "#ff8c00",
+          "#ffa733",
+          "#ffc266",
+          "#e07b00",
+          "#cc6f00"
+        ],
+        "simbolo": {
+          "borde_ancho": 0.3,
+          "borde_color": "#7c2d12",
+          "forma": "estrella",
+          "tamano": 4.5
+        },
+        "tipo": "subtipos"
+      }
+    },
+    "PuestoReguladorTension": {
+      "etiqueta": {
+        "campo": "TEXTOETIQUETA",
+        "escala_minima": 12000
+      },
+      "simbologia": {
+        "simbolo": {
+          "borde_ancho": 0.3,
+          "borde_color": "#5c4405",
+          "color": "#b8860b",
+          "forma": "pentagono",
+          "tamano": 3.4
+        },
+        "tipo": "simple"
+      }
+    },
+    "PuestoSeccionador": {
+      "etiqueta": {
+        "campo": "TEXTOETIQUETA",
+        "escala_minima": 6000
+      },
+      "simbologia": {
+        "colores": [
+          "#8b1a89",
+          "#a83fa6",
+          "#c46ac2",
+          "#5e0f5c"
+        ],
+        "simbolo": {
+          "borde_ancho": 0.3,
+          "borde_color": "#4a0e49",
+          "forma": "triangulo",
+          "tamano": 3.2
+        },
+        "tipo": "subtipos"
+      }
+    },
+    "PuestoSeccionadorFusible": {
+      "etiqueta": {
+        "campo": "TEXTOETIQUETA",
+        "escala_minima": 6000
+      },
+      "simbologia": {
+        "simbolo": {
+          "borde_ancho": 0.3,
+          "borde_color": "#4a0e49",
+          "color": "#8b1a89",
+          "forma": "rombo",
+          "tamano": 3.0
+        },
+        "tipo": "simple"
+      }
+    },
+    "PuestoTransfDistribucion": {
+      "etiqueta": {
+        "campo": "CODIGOPUESTO",
+        "escala_minima": 6000,
+        "halo": 1.2,
+        "negrita": true
+      },
+      "simbologia": {
+        "colores": [
+          "#2e8b57",
+          "#3cb371",
+          "#66cdaa",
+          "#1e6f43"
+        ],
+        "simbolo": {
+          "borde_ancho": 0.3,
+          "borde_color": "#14532d",
+          "forma": "cuadrado",
+          "tamano": 3.2
+        },
+        "tipo": "subtipos"
+      }
+    },
+    "PuestoTransfPotencia": {
+      "etiqueta": {
+        "campo": "TEXTOETIQUETA",
+        "escala_minima": 25000,
+        "negrita": true
+      },
+      "simbologia": {
+        "simbolo": {
+          "borde_ancho": 0.4,
+          "borde_color": "#052e16",
+          "color": "#14532d",
+          "forma": "cuadrado",
+          "tamano": 4.4
+        },
+        "tipo": "simple"
+      }
+    },
+    "PuntoApertura": {
+      "etiqueta": {
+        "campo": "TEXTOETIQUETA",
+        "escala_minima": 8000
+      },
+      "simbologia": {
+        "simbolo": {
+          "borde_ancho": 0.4,
+          "borde_color": "#c2185b",
+          "color": "#c2185b",
+          "forma": "equis",
+          "tamano": 3.0
+        },
+        "tipo": "simple"
+      }
+    },
+    "PuntoCarga": {
+      "escala_minima": 8000,
+      "simbologia": {
+        "simbolo": {
+          "borde_ancho": 0.15,
+          "borde_color": "#7c5c00",
+          "color": "#f7c948",
+          "forma": "circulo",
+          "tamano": 1.6
+        },
+        "tipo": "simple"
+      }
+    },
+    "PuntoMiscelaneo": {
+      "escala_minima": 8000,
+      "simbologia": {
+        "simbolo": {
+          "borde_ancho": 0.2,
+          "borde_color": "#424242",
+          "color": "#9e9e9e",
+          "forma": "circulo",
+          "tamano": 1.8
+        },
+        "tipo": "simple"
+      }
+    },
+    "Semaforo": {
+      "escala_minima": 8000,
+      "simbologia": {
+        "simbolo": {
+          "borde_ancho": 0.2,
+          "borde_color": "#4a0e0e",
+          "color": "#e53935",
+          "forma": "cuadrado",
+          "tamano": 2.2
+        },
+        "tipo": "simple"
+      }
+    },
+    "Subestacion": {
+      "etiqueta": {
+        "campo": "NOMBRE",
+        "halo": 1.5,
+        "negrita": true,
+        "tamano": 10
+      },
+      "simbologia": {
+        "simbolo": {
+          "borde_ancho": 0.6,
+          "borde_color": "#ffffff",
+          "color": "#111111",
+          "forma": "cuadrado",
+          "tamano": 5.0
+        },
+        "tipo": "simple"
+      }
+    },
+    "Tensor": {
+      "escala_minima": 8000,
+      "simbologia": {
+        "simbolo": {
+          "borde_ancho": 0.3,
+          "borde_color": "#6d6d6d",
+          "color": "#6d6d6d",
+          "forma": "cruz",
+          "tamano": 2.0
+        },
+        "tipo": "simple"
+      }
+    },
+    "TramoBajaTensionAereo": {
+      "escala_minima": 12000,
+      "simbologia": {
+        "colores": [
+          "#1f6fb4",
+          "#4a90c2",
+          "#7fb3d5",
+          "#0b3c66",
+          "#5dade2",
+          "#2874a6",
+          "#a9cce3",
+          "#154360",
+          "#3498db"
+        ],
+        "simbolo": {
+          "ancho": 0.5
+        },
+        "tipo": "subtipos"
+      }
+    },
+    "TramoBajaTensionSubterraneo": {
+      "escala_minima": 12000,
+      "simbologia": {
+        "colores": [
+          "#1f6fb4",
+          "#4a90c2",
+          "#7fb3d5",
+          "#0b3c66",
+          "#5dade2",
+          "#2874a6",
+          "#a9cce3",
+          "#154360",
+          "#3498db"
+        ],
+        "simbolo": {
+          "ancho": 0.5,
+          "estilo": "dash",
+          "guiones": "3;1.5"
+        },
+        "tipo": "subtipos"
+      }
+    },
+    "TramoDistribucionAereo": {
+      "etiqueta": {
+        "campo": "ALIMENTADORID",
+        "escala_minima": 4000,
+        "halo": 1.0
+      },
+      "simbologia": {
+        "colores": [
+          "#d81e05",
+          "#e8663d",
+          "#f4a261",
+          "#b3170a",
+          "#ef8a62",
+          "#c1440e"
+        ],
+        "simbolo": {
+          "ancho": 0.8,
+          "flecha": true,
+          "flecha_intervalo": 18
+        },
+        "tipo": "subtipos"
+      }
+    },
+    "TramoDistribucionSubterraneo": {
+      "etiqueta": {
+        "campo": "ALIMENTADORID",
+        "escala_minima": 4000,
+        "halo": 1.0
+      },
+      "simbologia": {
+        "colores": [
+          "#d81e05",
+          "#e8663d",
+          "#f4a261",
+          "#b3170a",
+          "#ef8a62",
+          "#c1440e"
+        ],
+        "simbolo": {
+          "ancho": 0.8,
+          "estilo": "dash",
+          "flecha": true,
+          "flecha_intervalo": 18,
+          "guiones": "3;1.5"
+        },
+        "tipo": "subtipos"
+      }
+    },
+    "TramoSubtransmisionAereo": {
+      "simbologia": {
+        "simbolo": {
+          "ancho": 1.2,
+          "color": "#2b2b2b",
+          "flecha": true,
+          "flecha_intervalo": 24
+        },
+        "tipo": "simple"
+      }
+    },
+    "TramoSubtransmisionSubterraneo": {
+      "simbologia": {
+        "simbolo": {
+          "ancho": 1.2,
+          "color": "#2b2b2b",
+          "estilo": "dash",
+          "flecha": true,
+          "flecha_intervalo": 24,
+          "guiones": "4;2"
+        },
+        "tipo": "simple"
+      }
+    }
+  },
+  "descripcion": "Estilo de arranque del modelo electrico CNEL EP. NO es la simbologia oficial de la empresa: es un punto de partida legible en campo, pensado para copiarse y editarse. Para reproducir la simbologia de la oficina tal cual, exporte los archivos de capa .lyrx desde ArcGIS Pro y pase la carpeta con --simbologia.",
+  "version": 1
+}

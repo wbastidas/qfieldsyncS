@@ -46,6 +46,9 @@ ignore = [
     "C408",
     "RUF005",
     "SIM105",  # `contextlib.suppress` no existe en 2.7
+    # https://docs.astral.sh/ruff/rules/unnecessary-cast-to-int/
+    # En 2.7 `round()` devuelve un float: el `int()` no sobra, hace falta.
+    "RUF046",
     # https://docs.astral.sh/ruff/rules/raise-without-from-inside-except/
     # `raise ... from` es sintaxis de Python 3.
     "B904",

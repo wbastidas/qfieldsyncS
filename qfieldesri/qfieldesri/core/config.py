@@ -157,6 +157,8 @@ class PackagingConfig(object):
         spatial_index=True,
         connection_note="",
         scope=None,
+        symbology_source=None,
+        style_file=None,
     ):
         #: ruta de la File Geodatabase (.gdb) o del ``.sde`` corporativo
         self.workspace = workspace
@@ -192,6 +194,11 @@ class PackagingConfig(object):
         #: ambito de exportacion (alimentador, subestacion, poligono...).
         #: Es lo que decide que subconjunto de la red viaja al dispositivo.
         self.scope = scope if isinstance(scope, Scope) else Scope.from_dict(scope)
+        #: carpeta de archivos .lyrx, o un .lyrx/.lyr/.mxd del que importar la
+        #: simbologia de ArcGIS
+        self.symbology_source = symbology_source
+        #: archivo de estilo propio; manda sobre todo lo demas
+        self.style_file = style_file
 
     # ------------------------------------------------------------------
     def layer_config(self, name):
@@ -229,6 +236,8 @@ class PackagingConfig(object):
             "spatial_index": self.spatial_index,
             "connection_note": self.connection_note,
             "scope": self.scope.to_dict(),
+            "symbology_source": self.symbology_source,
+            "style_file": self.style_file,
         }
 
     @classmethod

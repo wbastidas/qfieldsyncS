@@ -31,6 +31,9 @@ from ..core.model import (
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+#: Sufijo del archivo de estilo que acompana a un perfil (ver ``symbology``).
+STYLE_SUFFIX = ".estilo.json"
+
 #: Campos de auditoria y metadatos que se repiten en casi todas las clases
 #: del modelo (y, en general, en cualquier geodatabase corporativa).
 SYSTEM_FIELD_HINTS = (
@@ -268,8 +271,16 @@ def load_profile(name="cnel_ep"):
 
 
 def available_profiles():
+    """Perfiles instalados, sin contar los archivos de estilo que los acompanan.
+
+    Junto a ``cnel_ep.json`` vive ``cnel_ep.estilo.json``, que es simbologia
+    del perfil y no un perfil aparte: ofrecerlo como modelo de datos solo
+    confunde a quien elige en la lista.
+    """
     names = ["generico"]
     for filename in sorted(os.listdir(HERE)):
+        if filename.endswith(STYLE_SUFFIX):
+            continue
         if filename.endswith(".json"):
             names.append(filename[: -len(".json")])
     return names

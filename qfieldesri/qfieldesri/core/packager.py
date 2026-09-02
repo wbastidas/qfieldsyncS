@@ -23,6 +23,7 @@ import os
 import re
 
 from ..profiles import FORM_GROUP_ORDER, load_profile
+from ..symbology import StyleSheet, SymbologyResolver, load_symbology
 from ..utils import wkb as wkb_utils
 from ..utils.checksum import feature_checksum
 from ..writers.geopackage import GeoPackageWriter, adapt_value, esri_type_to_gpkg
@@ -88,6 +89,8 @@ class PackagingResult(object):
         self.layer_counts = {}
         #: explicacion legible de como se acoto la exportacion
         self.scope_description = ""
+        #: de donde salio la simbologia de cada capa
+        self.symbology_description = ""
 
     @property
     def total_features(self):
@@ -113,6 +116,8 @@ class Packager(object):
         self.workspace = None
         #: plan de ambito resuelto (que filtro le toca a cada clase)
         self.scope_plan = None
+        #: resolutor de simbologia (estilo del usuario, ArcGIS, perfil, auto)
+        self.symbology = None
         self._catalog_tables = {}
         self._domain_cache = {}
         #: claves recogidas de los Puestos, para filtrar despues sus Unidades
@@ -139,6 +144,7 @@ class Packager(object):
             )
 
         layers = self._apply_scope(layers)
+        self._prepare_symbology()
 
         crs = self._project_crs(layers)
         manifest = self._new_manifest(crs)
@@ -178,6 +184,11 @@ class Packager(object):
         self._write_manifest(project_dir, manifest)
         if self.scope_plan is not None and not self.scope_plan.is_empty:
             result.scope_description = self.scope_plan.describe()
+        if self.symbology is not None:
+            result.symbology_description = self.symbology.summary()
+            result.warnings.extend(self.symbology.warnings)
+            for warning in self.symbology.warnings:
+                self.progress("Simbologia: %s" % warning)
         self.progress("Empaquetado terminado", 100)
         return result
 
@@ -241,6 +252,57 @@ class Packager(object):
         for line in self.scope_plan.describe().splitlines():
             self.progress(line)
         return self._order_parents_first(layers)
+
+    def _prepare_symbology(self):
+        """Reune las fuentes de simbologia y monta el resolutor.
+
+        ArcGIS guarda la simbologia fuera de la geodatabase, asi que aqui se
+        junta lo que haya: el archivo de estilo del usuario, los archivos de
+        capa exportados de ArcGIS, el estilo del perfil y, para el resto, la
+        resolucion automatica.
+        """
+        stylesheet = None
+        if self.config.style_file:
+            stylesheet = StyleSheet.load(self.config.style_file)
+            self.progress(
+                "Estilo del usuario: %s (%d capas)"
+                % (os.path.basename(self.config.style_file), len(stylesheet))
+            )
+
+        imported = {}
+        warnings = []
+        if self.config.symbology_source:
+            imported, warnings = load_symbology(self.config.symbology_source)
+            self.progress(
+                "Simbologia importada de ArcGIS: %d capas desde %s"
+                % (len(imported), _describe_source(self.config.symbology_source))
+            )
+
+        self.symbology = SymbologyResolver(
+            profile=self.profile, stylesheet=stylesheet, imported=imported
+        )
+        self.symbology.warnings.extend(warnings)
+
+    def _layer_style(self, layer_info, exported, count, index):
+        """Estilo de una capa, con el origen que corresponda.
+
+        Una tabla sin geometria no se dibuja en el mapa: darle simbologia solo
+        serviria para inflar el informe con capas que nadie ve.
+        """
+        geometry = _qgis_geometry(layer_info.geometry_type)
+        if geometry is None:
+            return None
+        return self.symbology.style_for(
+            layer_info.name,
+            geometry,
+            subtype_field=layer_info.subtype_field,
+            subtype_categories=[
+                (subtype.code, subtype.name) for subtype in layer_info.subtypes
+            ],
+            field_names=[field.name for field in exported],
+            feature_count=count,
+            color_index=index,
+        )
 
     def _order_parents_first(self, layers):
         """Coloca cada Puesto antes que las Unidades que dependen de el."""
@@ -384,6 +446,7 @@ class Packager(object):
                 (subtype.code, subtype.name) for subtype in layer_info.subtypes
             ],
             color_index=index,
+            style=self._layer_style(layer_info, exported, count, index),
         )
         layer_spec.fields = _sort_fields_by_group(layer_spec.fields)
         project.add_layer(layer_spec)
@@ -968,6 +1031,8 @@ class Packager(object):
             "crs": crs.code,
             "area_of_interest": self.config.area_of_interest,
             "scope": self.config.scope.to_dict(),
+            "symbology_source": self.config.symbology_source,
+            "style_file": self.config.style_file,
             "layers": [],
             "relations": [],
         }
@@ -993,6 +1058,12 @@ def load_manifest(project_dir):
         )
     with io.open(path, "r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def _qgis_geometry(esri_geometry):
+    """Geometria de ESRI -> la que usa el estilo (``Point``/``Line``/``Polygon``)."""
+    entry = GEOMETRY_MAP.get(esri_geometry)
+    return entry[1] if entry else None
 
 
 def _sort_fields_by_group(fields):
@@ -1042,6 +1113,45 @@ def _sanitize_table(name):
     # ('GYE.SDE.Barra'); en QField solo interesa la ultima parte.
     name = name.split(".")[-1]
     return re.sub(r"[^A-Za-z0-9_]", "_", name)
+
+
+def build_stylesheet(workspace, resolver, description=None):
+    """Resuelve el estilo de todas las clases espaciales y lo deja editable.
+
+    Sirve para dos cosas que en el fondo son la misma: ver que simbologia se va
+    a aplicar antes de empaquetar, y obtener un archivo de estilo de arranque
+    que el usuario retoca a mano y vuelve a pasar con ``--estilo``.
+    """
+    from ..symbology import describe_layer_style
+
+    sheet = StyleSheet({"capas": {}})
+    if description:
+        sheet.description = description
+    for layer in workspace.layers:
+        geometry = _qgis_geometry(layer.geometry_type)
+        if geometry is None:
+            continue
+        style = resolver.style_for(
+            layer.name,
+            geometry,
+            subtype_field=layer.subtype_field,
+            subtype_categories=[
+                (subtype.code, subtype.name) for subtype in layer.subtypes
+            ],
+            field_names=[field.name for field in layer.fields],
+            feature_count=layer.feature_count,
+        )
+        sheet.layers[layer.name] = describe_layer_style(style, geometry)
+    return sheet
+
+
+def _describe_source(source):
+    """Como nombrar el origen de simbologia en los mensajes."""
+    from ..symbology import ACTIVE_DOCUMENT_ALIASES
+
+    if source.lower() in ACTIVE_DOCUMENT_ALIASES:
+        return "el mapa abierto en ArcGIS"
+    return os.path.basename(source.rstrip("\\/")) or source
 
 
 def _sanitize_filename(name):

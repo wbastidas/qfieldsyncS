@@ -41,11 +41,12 @@ except ImportError:  # pragma: no cover - Python 2.7 (ArcMap)
 
 from .core.checker import WorkspaceChecker
 from .core.config import PackagingConfig
-from .core.packager import Packager, load_manifest
+from .core.packager import Packager, build_stylesheet, load_manifest
 from .core.scope import Scope, ScopeKind, ScopeResolver
 from .core.synchronizer import ConflictPolicy, Synchronizer
 from .profiles import available_profiles, load_profile
 from .readers import get_reader
+from .symbology import StyleSheet, SymbologyResolver, load_symbology
 from .version import __version__
 
 APP_TITLE = "qfieldESRI %s" % __version__
@@ -55,6 +56,14 @@ SCOPE_ALL = "Toda la geodatabase"
 
 #: Separador entre el codigo y su descripcion en las listas de valores.
 CODE_SEPARATOR = " - "
+
+#: De donde sacar la simbologia. Falta a proposito "el mapa abierto": este es
+#: un programa aparte de ArcGIS y no tiene acceso al documento en pantalla; lo
+#: que se exporta desde ArcGIS (una carpeta de .lyrx, un .lyr, un MXD) si.
+SYMBOLOGY_AUTO = "Automatica (la decide qfieldESRI)"
+SYMBOLOGY_FOLDER = "Carpeta de archivos de capa (.lyrx)"
+SYMBOLOGY_DOCUMENT = "Documento de ArcGIS (.lyrx, .lyr, .mxd, .aprx)"
+SYMBOLOGY_MODES = (SYMBOLOGY_AUTO, SYMBOLOGY_FOLDER, SYMBOLOGY_DOCUMENT)
 
 
 def scope_label(kind):
@@ -357,6 +366,8 @@ class Application(tk.Frame):
         scope.columnconfigure(2, weight=1)
         scope.rowconfigure(2, weight=1)
 
+        self._build_symbology_panel(frame)
+
         destination = ttk.LabelFrame(frame, text="Destino")
         destination.pack(fill="x", padx=8, pady=(0, 8))
 
@@ -391,6 +402,60 @@ class Application(tk.Frame):
         ttk.Button(
             actions, text="Ver que se exportaria", command=self.on_preview_scope
         ).pack(side="right", padx=6)
+
+    def _build_symbology_panel(self, frame):
+        """Panel de simbologia: de donde sale y con que se retoca."""
+        symbology = ttk.LabelFrame(frame, text="Como se vera en el dispositivo")
+        symbology.pack(fill="x", padx=8, pady=(0, 8))
+
+        ttk.Label(symbology, text="Simbologia:").grid(
+            row=0, column=0, sticky="w", padx=6, pady=6
+        )
+        self.var_symbology_mode = tk.StringVar(value=SYMBOLOGY_AUTO)
+        self.combo_symbology = ttk.Combobox(
+            symbology,
+            textvariable=self.var_symbology_mode,
+            values=list(SYMBOLOGY_MODES),
+            state="readonly",
+            width=38,
+        )
+        self.combo_symbology.grid(row=0, column=1, sticky="w", pady=6)
+        self.combo_symbology.bind("<<ComboboxSelected>>", self.on_symbology_changed)
+
+        self.var_symbology_path = tk.StringVar()
+        self.entry_symbology = ttk.Entry(
+            symbology, textvariable=self.var_symbology_path, width=48
+        )
+        self.entry_symbology.grid(row=0, column=2, sticky="we", padx=(8, 2))
+        self.button_symbology = ttk.Button(
+            symbology, text="Elegir...", command=self._pick_symbology
+        )
+        self.button_symbology.grid(row=0, column=3, padx=(0, 6))
+
+        ttk.Label(symbology, text="Archivo de estilo:").grid(
+            row=1, column=0, sticky="w", padx=6, pady=(0, 8)
+        )
+        self.var_style_file = tk.StringVar()
+        ttk.Entry(symbology, textvariable=self.var_style_file, width=48).grid(
+            row=1, column=1, columnspan=2, sticky="we", padx=(0, 2), pady=(0, 8)
+        )
+        ttk.Button(symbology, text="Elegir...", command=self._pick_style_file).grid(
+            row=1, column=3, padx=(0, 6), pady=(0, 8)
+        )
+        ttk.Button(
+            symbology,
+            text="Generar archivo de estilo...",
+            command=self.on_write_style,
+        ).grid(row=2, column=1, columnspan=2, sticky="w", padx=(0, 6), pady=(0, 8))
+        ttk.Label(
+            symbology,
+            text=(
+                "El archivo de estilo manda sobre lo importado de ArcGIS. "
+                "Generelo, editelo y vuelva a cargarlo aqui."
+            ),
+        ).grid(row=3, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 6))
+        symbology.columnconfigure(2, weight=1)
+        self.on_symbology_changed()
 
     # -- pestana 3 ------------------------------------------------------
     def _build_sync_tab(self):
@@ -502,6 +567,46 @@ class Application(tk.Frame):
         path = filedialog.askdirectory(title="Carpeta donde dejar el paquete")
         if path:
             self.var_output.set(path)
+
+    def _pick_symbology(self):
+        mode = self.var_symbology_mode.get()
+        if mode == SYMBOLOGY_FOLDER:
+            path = filedialog.askdirectory(
+                title="Carpeta con los archivos de capa (.lyrx)"
+            )
+        else:
+            path = filedialog.askopenfilename(
+                title="Documento de ArcGIS del que leer la simbologia",
+                filetypes=[
+                    ("Archivo de capa de ArcGIS Pro", "*.lyrx"),
+                    ("Archivo de capa de ArcMap", "*.lyr"),
+                    ("Documento de ArcMap", "*.mxd"),
+                    ("Proyecto de ArcGIS Pro", "*.aprx"),
+                    ("Todos", "*.*"),
+                ],
+            )
+        if path:
+            self.var_symbology_path.set(path)
+
+    def _pick_style_file(self):
+        path = filedialog.askopenfilename(
+            title="Archivo de estilo de qfieldESRI",
+            filetypes=[("Estilo de qfieldESRI", "*.json"), ("Todos", "*.*")],
+        )
+        if path:
+            self.var_style_file.set(path)
+
+    def on_symbology_changed(self, event=None):
+        """Solo pide ruta cuando el modo elegido la necesita."""
+        needs_path = self.var_symbology_mode.get() != SYMBOLOGY_AUTO
+        state = "normal" if needs_path else "disabled"
+        self.entry_symbology.configure(state=state)
+        self.button_symbology.configure(state=state)
+
+    def _symbology_source(self):
+        if self.var_symbology_mode.get() == SYMBOLOGY_AUTO:
+            return ""
+        return self.var_symbology_path.get().strip()
 
     def _pick_package(self):
         path = filedialog.askdirectory(title="Carpeta del proyecto de QField")
@@ -714,6 +819,8 @@ class Application(tk.Frame):
             project_name=self.var_project.get().strip() or "qfield_proyecto",
             profile=self.var_profile.get(),
             scope=self._build_scope(),
+            symbology_source=self._symbology_source(),
+            style_file=self.var_style_file.get().strip(),
         )
 
     def on_preview_scope(self):
@@ -740,6 +847,79 @@ class Application(tk.Frame):
 
         self._run_task(work, done)
 
+    def on_write_style(self):
+        """Escribe el estilo que se aplicaria ahora, para editarlo a mano.
+
+        Es la respuesta practica a que ArcGIS guarde la simbologia en el MXD:
+        se resuelve una vez, se deja en un archivo legible y a partir de ahi la
+        decision es del usuario, no del programa.
+        """
+        workspace_path = self.var_workspace.get().strip()
+        if not workspace_path:
+            messagebox.showwarning(APP_TITLE, "Elija primero la geodatabase.")
+            return
+        destination = filedialog.asksaveasfilename(
+            title="Guardar el archivo de estilo",
+            defaultextension=".json",
+            initialfile="qfieldesri_estilo.json",
+            filetypes=[("Estilo de qfieldESRI", "*.json"), ("Todos", "*.*")],
+        )
+        if not destination:
+            return
+
+        source = self._symbology_source()
+        base_path = self.var_style_file.get().strip()
+        profile_name = self.var_profile.get()
+
+        def work(progress):
+            imported = {}
+            warnings = []
+            if source:
+                progress("Leyendo la simbologia de ArcGIS...", 15)
+                imported, warnings = load_symbology(source)
+
+            progress("Leyendo el esquema de la geodatabase...", 40)
+            reader = self._open_reader()
+            try:
+                info = reader.describe_workspace()
+                resolver = SymbologyResolver(
+                    profile=load_profile(profile_name),
+                    stylesheet=StyleSheet.load(base_path) if base_path else None,
+                    imported=imported,
+                )
+                progress("Resolviendo la simbologia de cada clase...", 70)
+                sheet = build_stylesheet(
+                    info,
+                    resolver,
+                    description=(
+                        "Estilos de qfieldESRI para %s. Edite colores, formas, "
+                        "etiquetas y escalas, y cargue este archivo en "
+                        "'Archivo de estilo'." % info.path
+                    ),
+                )
+            finally:
+                reader.close()
+            sheet.save(destination)
+            return sheet, resolver, warnings
+
+        def done(payload):
+            sheet, resolver, warnings = payload
+            self._log("")
+            for warning in warnings + resolver.warnings:
+                self._log("AVISO: %s" % warning)
+            for name in sorted(sheet.layers):
+                self._log("  %-40s %s" % (name, resolver.sources.get(name, "")))
+            self._log("")
+            self._log(resolver.summary())
+            self.var_style_file.set(destination)
+            messagebox.showinfo(
+                APP_TITLE,
+                "Estilo de %d capas escrito en:\n%s\n\nEditelo y exporte: "
+                "queda cargado como archivo de estilo." % (len(sheet), destination),
+            )
+
+        self._run_task(work, done)
+
     def on_export(self):
         try:
             config = self._build_config()
@@ -761,6 +941,11 @@ class Application(tk.Frame):
             for name in sorted(result.layer_counts):
                 self._log("  %-40s %8d entidades" % (name, result.layer_counts[name]))
             self._log("  %-40s %8d entidades" % ("TOTAL", result.total_features))
+            if result.symbology_description:
+                self._log("")
+                self._log(result.symbology_description)
+            for warning in result.warnings:
+                self._log("AVISO: %s" % warning)
             if result.total_features == 0:
                 messagebox.showwarning(
                     APP_TITLE,

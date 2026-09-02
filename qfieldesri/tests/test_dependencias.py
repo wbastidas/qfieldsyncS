@@ -44,6 +44,7 @@ ALLOWED_EXTERNAL = {
     "arcpy": (
         "qfieldesri/readers/arcpy_reader.py",
         "qfieldesri/core/attachments.py",
+        "qfieldesri/symbology/arcgis.py",
         "qfieldesri/launcher.py",
         "qfieldesri/app.py",
         "QFieldESRI.pyt",

@@ -269,6 +269,76 @@ class CliTest(unittest.TestCase):
         self.assertIn("EstructuraSoporte", self.text)
         self.assertIn("TOTAL", self.text)
 
+    # -- simbologia -----------------------------------------------------
+    def test_estilo_escribe_un_archivo_editable(self):
+        destination = os.path.join(self.directory, "estilo.json")
+        code = self._run("estilo", "--gdb", "demo.gdb", "--salida", destination)
+        self.assertEqual(code, cli.EXIT_OK)
+        self.assertTrue(os.path.isfile(destination))
+
+        import json
+
+        with open(destination) as handle:
+            data = json.load(handle)
+        self.assertTrue(data["capas"])
+        # Cada capa sale con simbologia declarada, no con un hueco.
+        for definition in data["capas"].values():
+            self.assertIn("simbologia", definition)
+
+    def test_estilo_sin_salida_lista_el_origen_de_cada_capa(self):
+        code = self._run("estilo", "--gdb", "demo.gdb")
+        self.assertEqual(code, cli.EXIT_OK)
+        self.assertIn("Simbologia:", self.text)
+
+    def test_el_estilo_generado_se_puede_volver_a_aplicar(self):
+        """El ciclo completo: generar el estilo, editarlo y empaquetar con el."""
+        style = os.path.join(self.directory, "estilo.json")
+        self._run("estilo", "--gdb", "demo.gdb", "--salida", style)
+
+        import json
+
+        with open(style) as handle:
+            data = json.load(handle)
+        name = sorted(data["capas"])[0]
+        data["capas"][name]["simbologia"] = {
+            "tipo": "simple",
+            "simbolo": {"color": "#123456"},
+        }
+        with open(style, "w") as handle:
+            json.dump(data, handle)
+
+        code = self._run(
+            "empaquetar",
+            "--gdb",
+            "demo.gdb",
+            "--salida",
+            self.directory,
+            "--nombre",
+            "conestilo",
+            "--estilo",
+            style,
+        )
+        self.assertEqual(code, cli.EXIT_OK)
+        project = os.path.join(self.directory, "conestilo", "conestilo.qgs")
+        with open(project) as handle:
+            xml = handle.read()
+        self.assertIn("18,52,86,255", xml)  # #123456 en la notacion de QField
+        self.assertIn("archivo de estilo", self.text)
+
+    def test_empaquetar_avisa_si_el_origen_de_simbologia_no_existe(self):
+        code = self._run(
+            "empaquetar",
+            "--gdb",
+            "demo.gdb",
+            "--salida",
+            self.directory,
+            "--nombre",
+            "sinsimbologia",
+            "--simbologia",
+            os.path.join(self.directory, "no_existe.txt"),
+        )
+        self.assertEqual(code, cli.EXIT_ERROR)
+
     def test_sin_subcomando_muestra_la_ayuda(self):
         self.assertEqual(self._run(), cli.EXIT_ERROR)
 

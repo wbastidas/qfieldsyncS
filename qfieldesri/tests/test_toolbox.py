@@ -113,12 +113,19 @@ class ToolboxTest(unittest.TestCase):
         sys.modules.pop("arcpy", None)
         sys.modules.pop("qfieldesri.readers.arcpy_reader", None)
 
-    def test_la_caja_expone_las_cinco_herramientas(self):
+    def test_la_caja_expone_sus_herramientas_numeradas(self):
         toolbox = self.toolbox.Toolbox()
         self.assertEqual(toolbox.alias, "qfieldesri")
-        self.assertEqual(len(toolbox.tools), 5)
         labels = [tool().label for tool in toolbox.tools]
-        self.assertTrue(labels[0].startswith("1"))
+        self.assertEqual(len(labels), 6)
+        # El numero de cada herramienta marca el orden de trabajo: analizar,
+        # preparar la simbologia, empaquetar, sincronizar, publicar, recuperar.
+        for position, label in enumerate(labels, start=1):
+            self.assertTrue(
+                label.startswith(str(position)),
+                "'%s' deberia empezar por %d" % (label, position),
+            )
+        self.assertTrue(any("simbologia" in label for label in labels))
         self.assertTrue(any("Empaquetar" in label for label in labels))
         self.assertTrue(any("Sincronizar" in label for label in labels))
 
@@ -231,6 +238,66 @@ class ToolboxTest(unittest.TestCase):
         tool, by_name = self._packaging_parameters(scope_kind="Poligono de sector")
         tool.updateMessages(list(by_name.values()))
         self.assertTrue(by_name["scope_polygon"].messages)
+
+    # -- simbologia -----------------------------------------------------
+    def test_la_simbologia_esta_en_su_propia_categoria(self):
+        parameters = self.toolbox.EmpaquetarParaQField().getParameterInfo()
+        by_name = dict((p.name, p) for p in parameters)
+        for name in (
+            "symbology_mode",
+            "symbology_folder",
+            "symbology_document",
+            "style_file",
+        ):
+            self.assertIn(name, by_name)
+            self.assertEqual(by_name[name].category, "Simbologia")
+        self.assertIn(
+            self.toolbox.SYMBOLOGY_CURRENT, by_name["symbology_mode"].filter.list
+        )
+
+    def test_solo_se_pide_la_ruta_que_hace_falta(self):
+        tool, by_name = self._packaging_parameters(
+            symbology_mode=self.toolbox.SYMBOLOGY_FOLDER
+        )
+        tool.updateParameters(list(by_name.values()))
+        self.assertTrue(by_name["symbology_folder"].enabled)
+        self.assertFalse(by_name["symbology_document"].enabled)
+
+        by_name["symbology_mode"].value = self.toolbox.SYMBOLOGY_DOCUMENT
+        tool.updateParameters(list(by_name.values()))
+        self.assertTrue(by_name["symbology_document"].enabled)
+        self.assertFalse(by_name["symbology_folder"].enabled)
+
+    def test_exige_la_ruta_del_origen_de_simbologia(self):
+        tool, by_name = self._packaging_parameters(
+            symbology_mode=self.toolbox.SYMBOLOGY_FOLDER
+        )
+        tool.updateMessages(list(by_name.values()))
+        self.assertTrue(by_name["symbology_folder"].messages)
+
+    def test_el_modo_elegido_se_traduce_al_origen(self):
+        source = self.toolbox._symbology_source
+        _tool, by_name = self._packaging_parameters()
+        self.assertEqual(source(by_name), "")
+
+        _tool, by_name = self._packaging_parameters(
+            symbology_mode=self.toolbox.SYMBOLOGY_CURRENT
+        )
+        self.assertEqual(source(by_name), "CURRENT")
+
+        _tool, by_name = self._packaging_parameters(
+            symbology_mode=self.toolbox.SYMBOLOGY_FOLDER,
+            symbology_folder=os.path.join(ROOT, "estilos"),
+        )
+        self.assertEqual(source(by_name), os.path.join(ROOT, "estilos"))
+
+    def test_la_herramienta_de_simbologia_pide_lo_justo(self):
+        parameters = self.toolbox.PrepararSimbologia().getParameterInfo()
+        by_name = dict((p.name, p) for p in parameters)
+        self.assertEqual(by_name["workspace"].parameterType, "Required")
+        self.assertEqual(by_name["style_out"].parameterType, "Required")
+        self.assertEqual(by_name["style_out"].direction, "Output")
+        self.assertIn("symbology_mode", by_name)
 
     def test_la_herramienta_de_sincronizacion_valida_la_carpeta(self):
         tool = self.toolbox.SincronizarDesdeQField()

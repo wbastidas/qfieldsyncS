@@ -14,6 +14,7 @@ Subcomandos:
 
 ``analizar``      inventario de la geodatabase y verificacion previa
 ``ambitos``       lista los alimentadores, subestaciones o parroquias elegibles
+``estilo``        exporta la simbologia como archivo editable, o la revisa
 ``configurar``    genera un archivo de configuracion editable
 ``empaquetar``    geodatabase -> carpeta de proyecto QField
 ``sincronizar``   carpeta de QField -> geodatabase
@@ -35,6 +36,7 @@ from .core.scope import Scope, ScopeKind, ScopeResolver
 from .core.synchronizer import ConflictPolicy, Synchronizer
 from .profiles import available_profiles, load_profile
 from .readers import get_reader
+from .symbology import StyleSheet, SymbologyResolver, load_symbology
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -160,6 +162,62 @@ def cmd_ambitos(args):
         reader.close()
 
 
+def cmd_estilo(args):
+    """Exporta la simbologia como archivo de estilo editable.
+
+    Es la forma comoda de empezar: se genera el estilo que qfieldESRI usaria
+    ahora mismo —con lo que haya deducido de la geodatabase o importado de
+    ArcGIS— y se abre el archivo para retocar los colores a mano.
+    """
+    from .core.packager import build_stylesheet
+
+    reader = _open_reader(args.gdb, args.motor)
+    try:
+        workspace = reader.describe_workspace()
+        profile = load_profile(args.perfil)
+
+        imported = {}
+        if args.simbologia:
+            imported, warnings = load_symbology(args.simbologia)
+            _out("Simbologia importada: %d capas." % len(imported))
+            for warning in warnings:
+                _out("  AVISO: %s" % warning)
+
+        base = StyleSheet.load(args.estilo) if args.estilo else None
+        resolver = SymbologyResolver(
+            profile=profile, stylesheet=base, imported=imported
+        )
+
+        sheet = build_stylesheet(
+            workspace,
+            resolver,
+            description=(
+                "Estilos de qfieldESRI para %s. Edite colores, formas, "
+                "etiquetas y escalas, y pase este archivo con --estilo."
+                % workspace.path
+            ),
+        )
+
+        for warning in resolver.warnings:
+            _out("AVISO: %s" % warning)
+        _out(resolver.summary())
+
+        if args.salida:
+            sheet.save(args.salida)
+            _out("")
+            _out(
+                "Estilo escrito en %s (%d capas). Editelo y pasele "
+                "'--estilo %s' al empaquetar."
+                % (args.salida, len(sheet), args.salida)
+            )
+        else:
+            for name in sorted(sheet.layers):
+                _out("  %-34s %s" % (name, resolver.sources.get(name, "")))
+        return EXIT_OK
+    finally:
+        reader.close()
+
+
 def cmd_configurar(args):
     # Aqui --salida es el archivo de configuracion, no una carpeta.
     destination = args.salida or "qfieldesri_config.json"
@@ -210,6 +268,8 @@ def cmd_empaquetar(args):
         if result.scope_description:
             _out(result.scope_description)
             _out("")
+        if result.symbology_description:
+            _out(result.symbology_description)
         _out("Paquete: %s" % result.project_dir)
         _out("Proyecto: %s" % os.path.basename(result.project_file))
         for name in sorted(result.layer_counts):
@@ -353,6 +413,8 @@ def _config_from_args(args, workspace=None):
         include_related_tables=not getattr(args, "sin_tablas_relacionadas", False),
         big_domain_threshold=getattr(args, "umbral_dominio", 40),
         scope=_scope_from_args(args),
+        symbology_source=getattr(args, "simbologia", None),
+        style_file=getattr(args, "estilo", None),
     )
     solo = getattr(args, "solo", None)
     if solo and workspace is not None:
@@ -452,6 +514,20 @@ def build_parser():  # noqa: PLR0915
     )
     ambitos.set_defaults(func=cmd_ambitos)
 
+    estilo = subparsers.add_parser(
+        "estilo",
+        help="Exporta la simbologia como archivo de estilo editable",
+    )
+    _add_common(estilo, with_output=False)
+    estilo.add_argument(
+        "--salida", help="Archivo de estilo a escribir; sin esto solo se lista"
+    )
+    estilo.add_argument(
+        "--simbologia", help="Carpeta de .lyrx o archivo .lyrx/.lyr/.mxd de origen"
+    )
+    estilo.add_argument("--estilo", help="Estilo de partida al que anadir")
+    estilo.set_defaults(func=cmd_estilo)
+
     configurar = subparsers.add_parser(
         "configurar", help="Genera un archivo de configuracion editable"
     )
@@ -511,6 +587,16 @@ def build_parser():  # noqa: PLR0915
     empaquetar.add_argument(
         "--area",
         help="Area de interes en WKT (equivale a --ambito poligono --poligono-wkt)",
+    )
+    empaquetar.add_argument(
+        "--simbologia",
+        help="De donde tomar la simbologia de ArcGIS: una carpeta de .lyrx, un "
+        ".lyrx/.lyr/.mxd/.aprx, o CURRENT para el mapa abierto",
+    )
+    empaquetar.add_argument(
+        "--estilo",
+        help="Archivo de estilo de qfieldESRI; manda sobre lo importado de "
+        "ArcGIS (se genera con el subcomando 'estilo')",
     )
     empaquetar.add_argument("--crs", type=int, help="Codigo EPSG de salida")
     empaquetar.add_argument(

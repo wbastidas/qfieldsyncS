@@ -86,7 +86,13 @@ comandos** para automatizar.
  │ memoria    │◄─────│ synchron. paquete -> geodatabase         │  └──────────────┘
  └────────────┘      │ cloudapi  QFieldCloud (urllib)           │
                      └──────────────────────────────────────────┘
-                                     profiles/  utils/
+  symbology/                         profiles/  utils/
+ ┌────────────┐
+ │ .lyrx (CIM)│──┐
+ │ MXD/.lyr   │──┤ modelo neutro de símbolos ──► simbología del proyecto
+ │ estilo JSON│──┤
+ │ automática │──┘
+ └────────────┘
 ```
 
 Los tres frentes comparten el mismo motor. Los lectores están detrás de una
@@ -201,7 +207,70 @@ Detalles que importan en producción:
   Alimentador`, `Numero Estacion` y `Subestacion` cambian en cada Unidad de
   Negocio.
 
-### 5.4 Verificación previa
+### 5.4 La simbología
+
+Es el punto donde más se nota que ArcGIS y QField no guardan las cosas en el
+mismo sitio. **ArcGIS no guarda la simbología en la geodatabase**: vive en el
+MXD, en el proyecto de Pro, en un `.lyr` o en un `.lyrx`. Una migración que solo
+leyera la geodatabase llegaría a campo en gris.
+
+Lo primero fue averiguar qué se puede leer y con qué fidelidad:
+
+| Origen | Formato | Qué expone |
+|---|---|---|
+| `.lyrx` | **JSON** (CIM) | Todo: colores, grosores, guiones, marcadores, etiquetas, escalas. Se lee **sin ArcGIS**, con la biblioteca estándar |
+| Capa en **ArcGIS Pro** | CIM vía `layer.getDefinition("V3")` | Todo, porque devuelve el mismo JSON |
+| `.lyr` / MXD en **ArcMap** | Binario, vía `arcpy.mapping` | Solo la **clasificación**: el campo, los valores y sus rótulos. **Los colores no los publica la API** |
+
+Esa asimetría es de ArcGIS, no del programa; por eso la vía recomendada es
+exportar `.lyrx`, y por eso la lectura de un MXD avisa expresamente de que los
+colores que se ven salen de la paleta de qfieldESRI.
+
+La arquitectura que salió de ahí es un **modelo neutro** (`symbology/model.py`)
+con cuatro productores y un consumidor:
+
+```
+.lyrx (CIM, JSON)  ─┐
+mapa abierto/MXD   ─┤
+archivo de estilo  ─┼──►  Symbol / Renderer / Label  ──►  proyecto de QField
+resolución auto    ─┘        (mm, RGBA 0-255)
+```
+
+Todo el modelo está **en milímetros** y en RGBA 0-255, que es lo que espera el
+destino; la conversión desde los puntos de ArcGIS (`25.4/72`) se hace una sola
+vez, al leer. Ni el lector conoce el XML del destino ni el escritor conoce el
+CIM.
+
+Las fuentes se ordenan por **precedencia explícita** (`symbology/__init__.py`):
+archivo de estilo del usuario → simbología importada de ArcGIS → estilo del
+perfil → automática. Cada capa **registra de dónde salió su estilo** y el
+empaquetado lo informa: quien recibe el paquete tiene que poder saber si está
+viendo la simbología de la oficina o un color inventado.
+
+El **archivo de estilo** (`symbology/stylesheet.py`) es JSON en castellano y
+existe por tres razones: no depender de ArcGIS para fijar la simbología, poder
+revisarla en un control de versiones, y poder editarla sin abrir nada. No se
+escribe a mano desde cero: se **genera** el estilo que se aplicaría ahora mismo
+y se retoca. Junto a los tipos habituales (`simple`, `categorizado`, `graduado`,
+`reglas`) tiene uno propio, `subtipos`, que clasifica por los subtipos **que
+declare la geodatabase**: los códigos no se escriben en el archivo, se leen en
+caliente, porque cambian de una Unidad de Negocio a otra —la misma razón por la
+que los valores de los dominios no están en el perfil.
+
+La **resolución automática** (`symbology/defaults.py`) es la última red: forma
+del marcador según el papel de la clase en el modelo, color derivado del nombre
+de la clase con una mezcla posicional (no del orden de empaquetado, para que la
+misma clase salga siempre igual), etiqueta del primer campo con sentido —
+`TEXTOETIQUETA` está en 27 de las 47 clases— y límite de escala en las clases
+densas, porque un teléfono no dibuja doscientas mil acometidas a escala de
+provincia.
+
+Antes de escribir, se **valida contra lo que de verdad viaja**: si el
+renderizador clasifica por un campo que no se exportó, se degrada a símbolo
+único conservando el color; si una etiqueta usa un campo que no viaja, se
+desactiva. Las dos cosas con aviso: degradar en silencio sería peor que fallar.
+
+### 5.5 Verificación previa
 
 `core/checker.py` revisa antes de generar: colisiones de nombre de tabla, clases
 sin sistema de referencia, campos que chocan con columnas reservadas del
@@ -210,7 +279,7 @@ que cambia si la clase se comprime), dominios que dependen del subtipo, capas
 demasiado grandes para un teléfono y desviaciones entre el esquema real y el
 catálogo del perfil.
 
-### 5.5 La vuelta
+### 5.6 La vuelta
 
 El empaquetador guarda dentro del propio GeoPackage una tabla **`qfe_baseline`**
 con la huella (`md5` de los campos reescribibles + la geometría normalizada) de
@@ -233,7 +302,7 @@ Toda la escritura ocurre dentro de una **sesión de edición de arcpy**
 (`arcpy.da.Editor`), obligatoria en SDE versionado y que además permite revertir
 el lote completo si algo falla a mitad.
 
-### 5.6 QFieldCloud
+### 5.7 QFieldCloud
 
 `core/cloudapi.py` habla con QFieldCloud sobre `urllib`: login, proyectos,
 subida y bajada. Sin dependencias externas, porque instalar paquetes en el
@@ -270,7 +339,9 @@ los campos por heurística de nombre.
 |---|---|---|
 | Mapa base en mbtiles | No incluida | Depende de un motor de renderizado. Se puede referenciar uno existente. |
 | Temas de mapa | No incluida | No hay equivalente en el modelo de ESRI; se emula con los grupos de capas. |
-| Simbología de ArcGIS/ArcFM | Renderizado propio | Se genera un símbolo por subtipo con una paleta legible al sol. Trasladar la simbología completa de ArcFM excede el alcance. |
+| Colores de un MXD o un `.lyr` en ArcMap | Solo la clasificación | `arcpy.mapping` no publica los colores de un documento binario. Se traslada la estructura y se avisa; para los colores exactos, `.lyrx` o archivo de estilo. |
+| Símbolos de fuente e imágenes de marcador | Forma equivalente | El destino no tiene esos símbolos instalados: se sustituyen por la forma geométrica más parecida, con aviso. |
+| Representaciones y simbología de ArcFM | No incluida | Son un motor de dibujo propio de ESRI/ArcFM, sin equivalente en el destino. |
 | Seguimiento GPS, geovallado | Propiedades escritas, sin interfaz | Las claves están soportadas por el escritor; falta exponerlas. |
 | Valores M | Se conservan si no se edita | QField no edita medidas. Se avisa en la verificación. |
 | Red geométrica y trazado de ArcFM | No se replica | `ParentCircuitSourceGUID` lo calcula el trace; en campo se captura y el trace se vuelve a correr en ArcGIS. Los campos viajan de solo lectura. |
@@ -278,7 +349,7 @@ los campos por heurística de nombre.
 
 ## 9. Verificación
 
-213 pruebas que se ejecutan **sin ArcGIS instalado**, sobre una geodatabase de
+281 pruebas que se ejecutan **sin ArcGIS instalado**, sobre una geodatabase de
 demostración en memoria que reproduce un fragmento real del modelo (poste, tramo
 MT con subtipos, puesto de transformación con sus transformadores y la tabla de
 alimentador cabecera con tres alimentadores repartidos en tres subestaciones):
@@ -289,7 +360,9 @@ python -m unittest discover -s tests -t .
 
 Cubren el contenedor GeoPackage (cabeceras, índice espacial, disparadores), la
 normalización de WKB, la estructura del archivo de proyecto, el perfil, el
-ámbito de exportación en sus seis formas, el empaquetado completo, los adjuntos,
+ámbito de exportación en sus seis formas, la simbología (lectura de CIM,
+archivo de estilo, precedencia entre fuentes y serialización), el empaquetado
+completo, los adjuntos,
 el ciclo de vuelta con detección de conflictos, la caja de herramientas de
 ArcGIS (cargada con un `arcpy` simulado), la lógica de la aplicación de
 escritorio, el lanzador y el guardia de dependencias.
@@ -305,12 +378,14 @@ proporciona.
 Oficina                              Campo                    Oficina
 ───────                              ─────                    ───────
 1 Abrir y analizar la geodatabase
-2 Elegir ámbito y exportar   ─────►  QField (sin cobertura)
+2 Preparar la simbología
+  (o dejar la automática)
+3 Elegir ámbito y exportar   ─────►  QField (sin cobertura)
   (o publicar en QFieldCloud)          captura y edición
                                             │
                                    QFieldCloud o cable
                                             │
-                                            └──────────────►  3 Comparar
+                                            └──────────────►  4 Comparar
                                                                  y aplicar
                                                               + volver a correr
                                                                 el trace de ArcFM

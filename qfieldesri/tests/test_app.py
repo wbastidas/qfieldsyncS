@@ -143,6 +143,18 @@ class LabelsTest(unittest.TestCase):
         self.assertIsNone(app.scope_kind_from_label(app.SCOPE_ALL))
         self.assertIsNone(app.scope_kind_from_label(""))
 
+    def test_los_modos_de_simbologia_son_de_archivo(self):
+        """La ventana es un programa aparte: no ve el mapa abierto en ArcGIS.
+
+        Ofrecer ahi "la simbologia del mapa actual" seria prometer algo que
+        solo puede cumplir la caja de herramientas, que si corre dentro.
+        """
+        self.assertIn(app.SYMBOLOGY_AUTO, app.SYMBOLOGY_MODES)
+        self.assertIn(app.SYMBOLOGY_FOLDER, app.SYMBOLOGY_MODES)
+        self.assertIn(app.SYMBOLOGY_DOCUMENT, app.SYMBOLOGY_MODES)
+        for mode in app.SYMBOLOGY_MODES:
+            self.assertNotIn("abierto", mode)
+
     def test_formato_de_los_valores(self):
         self.assertEqual(app.format_value("04BH07", "S/E BELO"), "04BH07 - S/E BELO")
         self.assertEqual(app.format_value("0901", None), "0901")

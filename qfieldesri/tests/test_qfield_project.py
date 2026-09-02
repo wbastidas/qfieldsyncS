@@ -8,6 +8,13 @@ import unittest
 import xml.etree.ElementTree as ET
 
 from qfieldesri.core.model import SpatialReferenceInfo
+from qfieldesri.symbology.model import (
+    Category,
+    Label,
+    LayerStyle,
+    Renderer,
+    Symbol,
+)
 from qfieldesri.writers.qfield_project import (
     FieldSpec,
     LayerSpec,
@@ -182,16 +189,72 @@ class QFieldProjectWriterTest(unittest.TestCase):
         snapping = self.root.find("./snapping-settings")
         self.assertEqual(snapping.get("enabled"), "1")
 
-    def test_renderizado_categorizado_por_subtipo(self):
+    def test_renderizado_categorizado(self):
         writer, _poste, _unidad = build_writer()
         capa = writer.layers[0]
-        capa.subtype_field = "SUBTIPO"
-        capa.subtype_categories = [(1, "Baja tension"), (2, "Media tension")]
+        capa.style = LayerStyle(
+            renderer=Renderer(
+                Renderer.CATEGORIZED,
+                field="SUBTIPO",
+                categories=[
+                    Category(1, "Baja tension", Symbol.marker("#1f6fb4")),
+                    Category(2, "Media tension", Symbol.marker("#d81e05")),
+                ],
+            )
+        )
         root = writer.build()
         renderer = root.find("./projectlayers/maplayer/renderer-v2")
         self.assertEqual(renderer.get("type"), "categorizedSymbol")
         self.assertEqual(renderer.get("attr"), "SUBTIPO")
-        self.assertEqual(len(renderer.findall("./categories/category")), 2)
+        categories = renderer.findall("./categories/category")
+        self.assertEqual(len(categories), 2)
+        self.assertEqual(categories[0].get("type"), "long")
+
+    def test_sin_estilo_la_capa_se_dibuja_igualmente(self):
+        # Nunca hay que dejar una capa invisible por no tener estilo.
+        writer, _poste, _unidad = build_writer()
+        writer.layers[0].style = None
+        root = writer.build()
+        renderer = root.find("./projectlayers/maplayer/renderer-v2")
+        self.assertEqual(renderer.get("type"), "singleSymbol")
+        self.assertTrue(renderer.findall(".//symbol"))
+
+    def test_etiquetado(self):
+        writer, _poste, _unidad = build_writer()
+        writer.layers[0].style = LayerStyle(
+            renderer=Renderer(Renderer.SINGLE, symbol=Symbol.marker("#000000")),
+            label=Label(field="CODIGO", size=9, buffer_size=1.2, min_scale=5000),
+        )
+        root = writer.build()
+        layer = root.find("./projectlayers/maplayer")
+        self.assertEqual(layer.get("labelsEnabled"), "1")
+        text_style = layer.find("./labeling/settings/text-style")
+        self.assertEqual(text_style.get("fieldName"), "CODIGO")
+        self.assertEqual(text_style.get("isExpression"), "0")
+        buffer_element = text_style.find("text-buffer")
+        self.assertEqual(buffer_element.get("bufferDraw"), "1")
+        rendering = layer.find("./labeling/settings/rendering")
+        self.assertEqual(rendering.get("scaleVisibility"), "1")
+        self.assertEqual(rendering.get("scaleMax"), "5000")
+
+    def test_sin_etiqueta_no_se_activa_el_etiquetado(self):
+        writer, _poste, _unidad = build_writer()
+        root = writer.build()
+        layer = root.find("./projectlayers/maplayer")
+        self.assertEqual(layer.get("labelsEnabled"), "0")
+
+    def test_visibilidad_por_escala(self):
+        writer, _poste, _unidad = build_writer()
+        writer.layers[0].style = LayerStyle(
+            renderer=Renderer(Renderer.SINGLE, symbol=Symbol.marker("#000000")),
+            min_scale=10000,
+            opacity=0.6,
+        )
+        root = writer.build()
+        layer = root.find("./projectlayers/maplayer")
+        self.assertEqual(layer.get("hasScaleBasedVisibilityFlag"), "1")
+        self.assertEqual(layer.get("minScale"), "10000")
+        self.assertEqual(layer.find("layerOpacity").text, "0.6")
 
     def test_escritura_a_disco_es_xml_valido(self):
         directory = tempfile.mkdtemp()

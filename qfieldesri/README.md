@@ -55,7 +55,10 @@ Al empaquetar traduce, sin intervención manual:
 - **alias, valores por defecto y campos obligatorios** → tal como los ve el
   editor en ArcMap;
 - **categoría del campo** (obligatorio, conectividad, sistema) → pestañas del
-  formulario, para que el técnico no tenga que bajar por 41 campos.
+  formulario, para que el técnico no tenga que bajar por 41 campos;
+- **simbología y etiquetado** → colores, grosores, guiones, marcadores, flecha
+  de sentido, etiquetas con halo y límites de escala, tomados del `.lyrx`, del
+  MXD, de un archivo de estilo propio o resueltos automáticamente.
 
 Al volver detecta qué se editó realmente en campo, avisa de los conflictos con
 lo que se haya editado en la oficina mientras tanto, y escribe en la
@@ -96,6 +99,102 @@ Los valores elegibles (los 246 alimentadores, las 139 subestaciones…) se leen
 catálogo del modelo advierte que cambian en cada Unidad de Negocio. Además se
 puede pedir que solo se ofrezcan los que de verdad aparecen en los datos.
 
+## Cómo se ve en el dispositivo: la simbología
+
+ArcGIS no guarda la simbología dentro de la geodatabase. Vive **fuera**: en el
+MXD, en el proyecto de Pro, en un `.lyr` o en un `.lyrx`. Por eso una migración
+que solo lea la geodatabase llega a campo en gris: los datos están bien y el
+mapa es ilegible. qfieldESRI resuelve la simbología aparte, con cuatro fuentes
+en orden de precedencia:
+
+| Orden | Fuente | Qué traslada |
+|---|---|---|
+| 1 | **Archivo de estilo** de qfieldESRI (`--estilo`) | Todo, y manda sobre lo demás |
+| 2 | **`.lyrx`** de ArcGIS Pro (una carpeta o uno suelto) | Fidelidad completa: colores, grosores, guiones, marcadores, etiquetas, escalas |
+| 3 | **Mapa abierto**, `.lyr` o MXD (requiere `arcpy`) | En **Pro**, todo (se lee la definición CIM). En **ArcMap**, solo la clasificación: el campo, los valores y sus rótulos — *ArcGIS no publica los colores de un MXD*, y el programa lo avisa |
+| 4 | **Automática** | Forma según el papel de la clase, color estable derivado del nombre, etiqueta del primer campo con sentido y límite de escala en las clases densas |
+
+Al terminar, el empaquetado dice de dónde salió cada capa
+(`Simbología: 24 archivos de capa de ArcGIS Pro, 3 automática.`), para que quien
+reciba el paquete sepa si está viendo la simbología de la oficina o un color
+inventado.
+
+### La vía recomendada: exportar `.lyrx`
+
+Un `.lyrx` es **JSON** y qfieldESRI lo lee sin ArcGIS, con los colores exactos.
+En ArcGIS Pro: clic derecho sobre la capa → **Compartir → Guardar como archivo
+de capa**. Deje todos los `.lyrx` en una carpeta y páseles esa carpeta. El
+nombre del archivo casa con el de la clase (también sin distinguir mayúsculas y
+sin el esquema de la geodatabase corporativa).
+
+### El archivo de estilo
+
+Para no depender de ArcGIS —y para poder revisar la simbología en un control de
+versiones— existe un archivo de estilo propio, en JSON y en castellano:
+
+```json
+{
+  "capas": {
+    "TramoDistribucionAereo": {
+      "simbologia": {
+        "tipo": "subtipos",
+        "colores": ["#d81e05", "#e8663d", "#f4a261"],
+        "simbolo": {"ancho": 0.8, "flecha": true, "flecha_intervalo": 18}
+      },
+      "etiqueta": {"campo": "ALIMENTADORID", "escala_minima": 4000, "halo": 1.0}
+    },
+    "PuestoTransfDistribucion": {
+      "simbologia": {
+        "tipo": "simple",
+        "simbolo": {"forma": "cuadrado", "color": "#2e8b57", "tamano": 3.2}
+      }
+    }
+  }
+}
+```
+
+Tipos de simbología: `simple`, `categorizado`, `graduado`, `reglas`, `ninguno` y
+**`subtipos`**, que clasifica por los subtipos **que declare la geodatabase** —
+los códigos no se escriben a mano, se leen en caliente, porque cambian de una
+Unidad de Negocio a otra. `flecha` dibuja el sentido del flujo sobre la línea.
+
+No hace falta escribirlo desde cero: se **genera** y luego se retoca.
+
+```bat
+REM el estilo que se aplicaría ahora mismo, listo para editar
+%PY% -m qfieldesri estilo --gdb C:\datos\GYE.gdb --salida estilo.json
+
+REM partiendo de los .lyrx de la oficina
+%PY% -m qfieldesri estilo --gdb C:\datos\GYE.gdb ^
+     --simbologia C:\simbologia\lyrx --salida estilo.json
+
+REM empaquetar con él
+%PY% -m qfieldesri empaquetar --gdb C:\datos\GYE.gdb --salida C:\salida ^
+     --nombre alimentador_04BH --ambito alimentador --valores 04BH070T11 ^
+     --estilo estilo.json
+```
+
+En la ventana, el apartado **Cómo se verá en el dispositivo** hace lo mismo con
+un botón; en ArcGIS, la herramienta **2 · Preparar simbología**, que además
+puede tomarla del **mapa que se tenga abierto** (esa opción no está en la
+ventana: es un programa aparte y no ve el documento de ArcGIS).
+
+El modelo CNEL EP trae un estilo de arranque
+(`qfieldesri/profiles/cnel_ep.estilo.json`) que se aplica solo: media tensión en
+rojo, baja tensión en azul, subtransmisión en negro, aéreo continuo y subterráneo
+a trazos, flecha de sentido en media tensión y subtransmisión, y etiquetas con
+límite de escala. **No es la simbología oficial de la empresa**: es un punto de
+partida legible, pensado para copiarse y editarse.
+
+### Qué se comprueba antes de generar
+
+- Si la simbología clasifica por un campo que **no viaja en el paquete**, se
+  degrada a símbolo único conservando el color, y se avisa.
+- Si una etiqueta usa un campo que no viaja, se desactiva, y se avisa.
+- Las clases con muchas entidades reciben **límite de escala** para que el
+  dispositivo no se ahogue dibujando doscientas mil acometidas a escala de
+  provincia.
+
 ## Requisitos
 
 | | |
@@ -131,8 +230,9 @@ subtipo, capas demasiado grandes…). **No modifica nada.**
 
 ### 2 · Exportar a QField
 
-Se elige el ámbito, los valores, la carpeta de salida y el nombre del proyecto.
-Produce una carpeta autocontenida:
+Se elige el ámbito, los valores, cómo se verá en el dispositivo (ver
+[simbología](#cómo-se-ve-en-el-dispositivo-la-simbología)), la carpeta de salida
+y el nombre del proyecto. Produce una carpeta autocontenida:
 
 ```
 mi_proyecto/
@@ -259,12 +359,15 @@ qfieldesri/
 │               verificación, sincronización, adjuntos, QFieldCloud
 ├── readers/    arcpy (File GDB y SDE), OGR, memoria
 ├── writers/    GeoPackage y archivo de proyecto de QField
-├── profiles/   curaduría del modelo (cnel_ep.json, genérico)
+├── symbology/  modelo neutro de símbolos, lector de .lyrx (CIM), lector de
+│               MXD/.lyr con arcpy, archivo de estilo y estilos automáticos
+├── profiles/   curaduría del modelo (cnel_ep.json, cnel_ep.estilo.json,
+│               genérico)
 ├── utils/      WKB, huellas de entidad, funciones ST_* para SQLite
 └── demo.py     geodatabase de ejemplo en memoria
 docs/modelo/    catálogo del modelo eléctrico CNEL EP (origen del perfil)
 tools/          generador del perfil desde el catálogo
-tests/          213 pruebas que corren sin ArcGIS
+tests/          281 pruebas que corren sin ArcGIS
 ```
 
 `arcpy` solo se importa en su lector, en el lanzador, en la caja de
@@ -279,11 +382,13 @@ cd qfieldesri
 python -m unittest discover -s tests -t .
 ```
 
-213 pruebas, sin ArcGIS ni ningún otro software instalado. Cubren el contenedor
+281 pruebas, sin ArcGIS ni ningún otro software instalado. Cubren el contenedor
 GeoPackage, la normalización de WKB, el archivo de proyecto, el perfil, el
-ámbito de exportación, el empaquetado completo, los adjuntos, el ciclo de vuelta
-con detección de conflictos, la caja de herramientas (con `arcpy` simulado), la
-aplicación y el guardia de dependencias.
+ámbito de exportación, la simbología (lectura de CIM, archivo de estilo,
+precedencia entre fuentes y serialización), el empaquetado completo, los
+adjuntos, el ciclo de vuelta con detección de conflictos, la caja de
+herramientas (con `arcpy` simulado), la aplicación y el guardia de
+dependencias.
 
 ## Actualizar el perfil del modelo
 
@@ -300,8 +405,12 @@ empaquetado.
 ## Limitaciones conocidas
 
 - No genera mapas base en mbtiles; sí puede referenciar uno existente.
-- No traslada la simbología de ArcGIS/ArcFM: genera un renderizado propio por
-  subtipo.
+- De un **MXD o un `.lyr` en ArcMap**, ArcGIS solo publica la clasificación, no
+  los colores: de esa vía sale la estructura de la simbología con la paleta de
+  qfieldESRI. Para trasladar los colores exactos, exporte las capas como
+  `.lyrx` desde ArcGIS Pro (o use el archivo de estilo).
+- No se trasladan los símbolos de fuente ni las imágenes de marcador de ArcGIS:
+  se sustituyen por la forma geométrica más parecida y se avisa.
 - No replica la red geométrica ni los auto-actualizadores de ArcFM. Los campos
   de conectividad viajan de solo lectura y el trace se vuelve a correr en ArcGIS
   después de sincronizar.

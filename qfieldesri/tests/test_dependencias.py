@@ -69,6 +69,7 @@ STDLIB = {
     "codecs",
     "collections",
     "contextlib",
+    "copy",
     "csv",
     "datetime",
     "getpass",

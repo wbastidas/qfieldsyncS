@@ -37,6 +37,10 @@ herramientas) y, opcionalmente, `osgeo` para leer sin ArcGIS.
 | **`QFieldESRI.pyt`** — caja de herramientas de ArcGIS | Cuando ya se está trabajando dentro de ArcMap o ArcGIS Pro, o para usarlo en ModelBuilder. |
 | **`python -m qfieldesri`** — línea de comandos | Para automatizar (un empaquetado nocturno por alimentador, por ejemplo). |
 
+En los tres casos el origen puede ser una **File Geodatabase** o una
+**geodatabase corporativa con ArcSDE** (Oracle 11gR2): se pasa la `.gdb` o el
+archivo de conexión `.sde` y el resto es idéntico.
+
 ## Qué hace
 
 ```
@@ -199,12 +203,28 @@ partida legible, pensado para copiarse y editarse.
 
 | | |
 |---|---|
-| **Para el uso normal** | ArcGIS Desktop 10.4+ o ArcGIS Pro 2.x/3.x. Nada más: ni paquetes de Python, ni permisos de administrador. |
+| **Objetivo principal** | **ArcGIS Desktop (ArcMap) 10.4 a 10.8**, con su Python **2.7**. Nada más: ni paquetes de Python, ni permisos de administrador. |
+| **También** | ArcGIS Pro 2.x/3.x (Python 3). El mismo código sirve para las dos. |
+| **Origen** | File Geodatabase, o geodatabase corporativa con ArcSDE — probado contra el modelo de **Oracle 11gR2**. |
 | **Para automatizar sin ArcGIS** | Python 2.7 o 3.x. Con GDAL instalado se puede leer una File Geodatabase en modo solo lectura. |
 | **En el dispositivo** | QField 2.x (Android, iOS, Windows, Linux, macOS). |
 
 La ventana usa **Tkinter**, que viene incluido en el Python que instala ArcGIS.
 Esa es toda la razón de la elección: cero instalaciones.
+
+### Python 2.7 no es una nota al pie
+
+ArcMap 10.x ejecuta Python 2.7 y no va a cambiar. Una sola *f-string*, una
+anotación de tipo o un `super()` sin argumentos y el programa deja de arrancar
+—no aquí, sino en el equipo del técnico—. Por eso hay una prueba que recorre
+**todo el árbol** y falla si aparece sintaxis que 2.7 no sabe leer, o un import
+de un módulo que solo existe en Python 3 sin respaldo.
+
+Lo mismo con `arcpy`: hay llamadas que solo existen en ArcGIS Pro
+(`arcpy.FromWKT`, el módulo `arcpy.management`). El código usa la forma que
+funciona en las dos versiones (`arcpy.Delete_management`), y otra prueba lo
+vigila. Cuando algo solo existe en una versión —`arcpy.mp` en Pro,
+`arcpy.mapping` en ArcMap— se pregunta antes de usarlo.
 
 ## Instalación
 
@@ -314,23 +334,60 @@ media tensión con subtipos, puesto de transformación con sus transformadores y
 la tabla de alimentador cabecera). Sirve para ver el resultado antes de conectar
 la geodatabase de producción.
 
-## Geodatabase corporativa (SDE)
+## Geodatabase corporativa: Oracle 11gR2 con ArcSDE
 
 Todo lo anterior funciona igual pasando la conexión `.sde` en vez de la `.gdb`.
-Lo que cambia por dentro:
+El origen es intercambiable: **la misma exportación, el mismo proyecto de QField
+y la misma vuelta**, contra una File Geodatabase o contra la corporativa.
 
-- se detecta si el workspace está versionado y se avisa en la verificación;
-- la escritura de vuelta se hace dentro de una sesión de edición con deshacer,
-  de modo que un fallo a mitad revierte el lote completo;
-- el recorte por área de interés se resuelve con el índice espacial del
-  servidor;
-- los nombres calificados (`GYE.SDE.Barra`) se normalizan al crear las tablas;
-- las listas de valores del ámbito se trocean para no reventar el `IN` del
-  gestor (Oracle corta en 1000).
+### Lo que Oracle cambia: cómo se llaman las clases
+
+En una File Geodatabase la clase es `EstructuraSoporte`. La misma clase en
+Oracle con ArcSDE llega como **`GYE.ESTRUCTURASOPORTE`**: en mayúsculas, porque
+así la guarda Oracle, y calificada con el usuario propietario del esquema. Con
+otra conexión, la misma clase llega como `SDE.ESTRUCTURASOPORTE`.
+
+Eso no cambia la clase, cambia la etiqueta. qfieldESRI compara **clases**, no
+cadenas, así que:
+
+- el perfil del modelo reconoce `GYE.BARRA` igual que `Barra`;
+- en la configuración, en `--solo` y en el archivo de estilo se escribe el
+  nombre corto (`Barra`) aunque el servidor la llame de otro modo;
+- las tablas del GeoPackage pierden el esquema: en el dispositivo se ve
+  `ESTRUCTURASOPORTE`, no `GYE.ESTRUCTURASOPORTE`;
+- **un paquete generado con una conexión se puede sincronizar con otra**, que
+  es lo normal cuando se empaqueta en campo y se aplica desde la oficina.
+
+### La sesión de edición, que es donde ArcGIS no perdona
+
+`arcpy.da.Editor.startEditing(with_undo, multiuser_mode)` necesita saber si los
+datos están **registrados como versionados**. Acertar no es opcional: editar
+una clase no versionada en modo versionado —o al revés— no da un aviso, da un
+error. qfieldESRI lo deduce de la propia geodatabase (`Describe.isVersioned`) y
+la verificación previa lo dice antes de empezar:
+
+| Situación | Qué hace | Qué le toca a usted |
+|---|---|---|
+| Clases **versionadas** | Sesión versionada, con deshacer | Reconciliar y publicar (*Reconcile / Post*) para que lo capturado llegue a `DEFAULT` |
+| Clases **no versionadas** | Sesión no versionada | Respaldar antes: se escribe directo en las tablas base, sin versión que revisar |
+| File Geodatabase | Sesión normal | Nada |
 
 Se escribe en la **versión a la que apunte el archivo de conexión**: apunte a la
-versión de trabajo que corresponda, no a `SDE.DEFAULT`, y concilie después con
-las herramientas de ArcGIS.
+versión de trabajo que corresponda, no a `SDE.DEFAULT`.
+
+### El resto de lo que cambia por dentro
+
+- un fallo puntual (un registro bloqueado por otro editor, un valor que el
+  dominio rechaza) se anota en el informe y **no tumba el lote**; si la base
+  rechaza cerrar la sesión, no queda nada aplicado y se dice con esas palabras;
+- las listas de valores del ámbito se trocean en bloques de 900 para no
+  reventar el `IN` de Oracle, que corta en 1000;
+- el recorte por área de interés se resuelve con el índice espacial del
+  servidor;
+- una clase ilegible (permisos, bloqueo de esquema) no tumba el análisis: se
+  avisa y se sigue;
+- las capas llevadas como **contexto de solo lectura** nunca se escriben de
+  vuelta, ni aunque el GeoPackage vuelva modificado.
 
 ## Recomendaciones para el modelo CNEL EP
 
@@ -355,8 +412,9 @@ qfieldesri/
 ├── app.py      ventana de escritorio (Tkinter)
 ├── launcher.py localiza el Python de ArcGIS y arranca la aplicación
 ├── cli.py      línea de comandos
-├── core/       metadatos, configuración, ámbito, empaquetado,
-│               verificación, sincronización, adjuntos, QFieldCloud
+├── core/       metadatos, nombres de clase, configuración, ámbito,
+│               empaquetado, verificación, sincronización, adjuntos,
+│               QFieldCloud
 ├── readers/    arcpy (File GDB y SDE), OGR, memoria
 ├── writers/    GeoPackage y archivo de proyecto de QField
 ├── symbology/  modelo neutro de símbolos, lector de .lyrx (CIM), lector de
@@ -364,10 +422,10 @@ qfieldesri/
 ├── profiles/   curaduría del modelo (cnel_ep.json, cnel_ep.estilo.json,
 │               genérico)
 ├── utils/      WKB, huellas de entidad, funciones ST_* para SQLite
-└── demo.py     geodatabase de ejemplo en memoria
+└── demo.py     geodatabase de ejemplo en memoria, local y corporativa
 docs/modelo/    catálogo del modelo eléctrico CNEL EP (origen del perfil)
 tools/          generador del perfil desde el catálogo
-tests/          281 pruebas que corren sin ArcGIS
+tests/          316 pruebas que corren sin ArcGIS
 ```
 
 `arcpy` solo se importa en su lector, en el lanzador, en la caja de
@@ -382,13 +440,14 @@ cd qfieldesri
 python -m unittest discover -s tests -t .
 ```
 
-281 pruebas, sin ArcGIS ni ningún otro software instalado. Cubren el contenedor
+316 pruebas, sin ArcGIS ni ningún otro software instalado. Cubren el contenedor
 GeoPackage, la normalización de WKB, el archivo de proyecto, el perfil, el
 ámbito de exportación, la simbología (lectura de CIM, archivo de estilo,
 precedencia entre fuentes y serialización), el empaquetado completo, los
 adjuntos, el ciclo de vuelta con detección de conflictos, la caja de
-herramientas (con `arcpy` simulado), la aplicación y el guardia de
-dependencias.
+herramientas (con `arcpy` simulado), la aplicación, el camino completo contra
+una geodatabase corporativa con nombres calificados de Oracle, y los guardias
+de dependencias, de sintaxis 2.7 y de superficie de `arcpy`.
 
 ## Actualizar el perfil del modelo
 

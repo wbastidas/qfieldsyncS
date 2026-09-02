@@ -15,6 +15,7 @@ from .model import (
     CATEGORY_OTHER,
     CATEGORY_SYSTEM,
 )
+from .naming import find as _find_class
 from .scope import Scope
 
 
@@ -202,10 +203,31 @@ class PackagingConfig(object):
 
     # ------------------------------------------------------------------
     def layer_config(self, name):
-        """Configuracion de una capa, creando una por defecto si no existe."""
+        """Configuracion de una capa, creando una por defecto si no existe.
+
+        El usuario escribe ``Barra`` en el archivo de configuracion o en
+        ``--solo``; la geodatabase corporativa la llama ``GYE.BARRA``. Se
+        acepta cualquiera de las dos formas: exigir la calificada obligaria a
+        reescribir la configuracion cada vez que cambia el propietario del
+        esquema.
+        """
         if name not in self.layers:
+            match = _find_class(self.layers, name)
+            if match is not None:
+                return self.layers[match]
             self.layers[name] = LayerConfig(name)
         return self.layers[name]
+
+    def find_layer_config(self, name):
+        """La configuracion de una capa **si existe**, sin crearla.
+
+        Se usa donde solo hay que consultar (verificacion, arrastre de tablas
+        relacionadas); admite el nombre calificado igual que ``layer_config``.
+        """
+        if name in self.layers:
+            return self.layers[name]
+        match = _find_class(self.layers, name)
+        return self.layers[match] if match is not None else None
 
     def included_layer_names(self):
         return [

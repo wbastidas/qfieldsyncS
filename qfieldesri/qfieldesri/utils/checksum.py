@@ -13,12 +13,33 @@ import hashlib
 _SEPARATOR = b"\x1f"
 
 
+def _binary_types():
+    """Tipos binarios de cada version de Python.
+
+    ``sqlite3.Binary`` es ``memoryview`` en Python 3 y ``buffer`` en el 2.7 de
+    ArcMap; los dos tienen que dar la misma huella que sus bytes.
+    """
+    types = [bytearray, memoryview]
+    try:
+        # ``buffer`` solo existe en Python 2.7; en 3.x levanta NameError.
+        types.append(buffer)
+    except NameError:
+        pass
+    return tuple(types)
+
+
+_BINARY_TYPES = _binary_types()
+
+
 def _encode(value):
     if value is None:
         return b"\x00"
     if isinstance(value, bytes):
         return value
-    if isinstance(value, bytearray):
+    if isinstance(value, _BINARY_TYPES):
+        # Un binario tiene que entrar por su contenido y no por su
+        # representacion: ``str(memoryview)`` incluye la direccion de memoria y
+        # la huella dejaria de ser reproducible entre ejecuciones.
         return bytes(value)
     if isinstance(value, float):
         # repr() de un float es estable y reversible en Python 2.7 y 3.x.

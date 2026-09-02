@@ -122,7 +122,7 @@ class WorkspaceChecker(object):
     def _selected_layers(self):
         layers = []
         for layer in self.workspace.layers:
-            config = self.config.layers.get(layer.name)
+            config = self.config.find_layer_config(layer.name)
             if config is not None and not config.is_included:
                 continue
             layers.append(layer)
@@ -130,19 +130,7 @@ class WorkspaceChecker(object):
 
     def _check_workspace(self, result):
         if self.workspace.is_enterprise:
-            result.add(
-                Feedback(
-                    Feedback.INFO,
-                    "El origen es una geodatabase corporativa.",
-                    hint=(
-                        "Los datos se leen de la version a la que apunta el "
-                        "archivo de conexion. Al sincronizar de vuelta se "
-                        "escribira en esa misma version dentro de una sesion "
-                        "de edicion."
-                    ),
-                    check="workspace_corporativo",
-                )
-            )
+            self._check_enterprise(result)
         if not self.workspace.domains:
             result.add(
                 Feedback(
@@ -168,6 +156,54 @@ class WorkspaceChecker(object):
                 )
             )
 
+    def _check_enterprise(self, result):
+        """Lo que hay que saber antes de tocar una geodatabase corporativa."""
+        result.add(
+            Feedback(
+                Feedback.INFO,
+                "El origen es una geodatabase corporativa.",
+                hint=(
+                    "Los datos se leen de la version a la que apunta el "
+                    "archivo de conexion. Al sincronizar de vuelta se "
+                    "escribira en esa misma version dentro de una sesion de "
+                    "edicion."
+                ),
+                check="workspace_corporativo",
+            )
+        )
+
+        versioned = [
+            layer.name for layer in self.workspace.layers if layer.is_versioned
+        ]
+        if versioned:
+            result.add(
+                Feedback(
+                    Feedback.INFO,
+                    "Hay %d clase(s) registradas como versionadas." % len(versioned),
+                    hint=(
+                        "Lo capturado en campo quedara en la version de la "
+                        "conexion. Para que llegue a DEFAULT hay que "
+                        "reconciliar y publicar (Reconcile / Post) despues de "
+                        "sincronizar."
+                    ),
+                    check="clases_versionadas",
+                )
+            )
+        else:
+            result.add(
+                Feedback(
+                    Feedback.WARNING,
+                    "Ninguna clase esta registrada como versionada.",
+                    hint=(
+                        "La sincronizacion escribira directamente en las "
+                        "tablas base, sin una version que revisar antes de "
+                        "publicar. Conviene respaldar antes de aplicar y "
+                        "revisar el informe de cambios con calma."
+                    ),
+                    check="sin_versionar",
+                )
+            )
+
     def _check_table_name_collisions(self, result, layers):
         seen = {}
         for layer in layers:
@@ -189,7 +225,7 @@ class WorkspaceChecker(object):
             seen[table] = layer.name
 
     def _check_layer(self, result, layer):
-        config = self.config.layers.get(layer.name)
+        config = self.config.find_layer_config(layer.name)
 
         if layer.is_spatial:
             if layer.geometry_type not in GEOMETRY_MAP:

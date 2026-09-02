@@ -12,6 +12,9 @@ Se escriben como clases sencillas (sin ``dataclasses``) porque ArcMap 10.x
 sigue ejecutando Python 2.7.
 """
 
+from .naming import find as _find_class
+from .naming import same_class, short_name
+
 # --- categorias de campo del modelo electrico CNEL EP ---------------------
 # Provienen del manual MN-TEC-OPE-100 y del catalogo del modelo (docs/modelo).
 CATEGORY_CORE = "core"  # obligatorio segun el manual
@@ -206,6 +209,7 @@ class LayerInfo(object):
         globalid_field=None,
         feature_dataset=None,
         feature_count=None,
+        is_versioned=False,
     ):
         self.name = name
         self.dataset_type = dataset_type
@@ -224,8 +228,16 @@ class LayerInfo(object):
         self.globalid_field = globalid_field
         self.feature_dataset = feature_dataset
         self.feature_count = feature_count
+        #: Registrada como versionada en la geodatabase corporativa. Decide
+        #: como hay que abrir la sesion de edicion al sincronizar de vuelta.
+        self.is_versioned = is_versioned
 
     # -- consultas de conveniencia -------------------------------------
+    @property
+    def short_name(self):
+        """Nombre sin el esquema: ``GYE.BARRA`` -> ``BARRA``."""
+        return short_name(self.name)
+
     @property
     def is_spatial(self):
         return self.dataset_type == self.FEATURE_CLASS and bool(self.geometry_type)
@@ -314,9 +326,18 @@ class WorkspaceInfo(object):
         return self.workspace_type == self.ENTERPRISE
 
     def layer(self, name):
-        lowered = name.lower()
+        """La capa que se llama asi, venga o no calificada por el esquema.
+
+        En una geodatabase corporativa la misma clase puede llegar como
+        ``Barra``, ``GYE.BARRA`` o ``SDE.BARRA`` segun con que usuario se
+        conecte; buscar solo por el nombre literal dejaria el paquete sin
+        sincronizar por un detalle del servidor.
+        """
+        match = _find_class(self.layer_names(), name)
+        if match is None:
+            return None
         for layer in self.layers:
-            if layer.name.lower() == lowered:
+            if layer.name == match:
                 return layer
         return None
 
@@ -324,12 +345,11 @@ class WorkspaceInfo(object):
         return [layer.name for layer in self.layers]
 
     def relationships_of(self, layer_name):
-        lowered = layer_name.lower()
         return [
             relationship
             for relationship in self.relationships
-            if relationship.origin.lower() == lowered
-            or relationship.destination.lower() == lowered
+            if same_class(relationship.origin, layer_name)
+            or same_class(relationship.destination, layer_name)
         ]
 
     def __repr__(self):  # pragma: no cover

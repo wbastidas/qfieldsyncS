@@ -28,6 +28,8 @@ La subestacion se resuelve en dos pasos, como manda el modelo: la tabla
 ahi el ambito se comporta como un ambito por alimentador.
 """
 
+from .naming import normalize
+
 
 class ScopeKind(object):
     """Formas de acotar la exportacion."""
@@ -416,15 +418,25 @@ class ScopeResolver(object):
         """
         if not scope.follow_relationships:
             return
-        names = dict((layer.name.lower(), layer) for layer in layers)
+        # Se indexa por nombre normalizado porque en una geodatabase
+        # corporativa la relacion puede nombrar las clases con una
+        # calificacion distinta de la que devuelve el recorrido del workspace.
+        names = {}
+        for layer in layers:
+            names.setdefault(layer.name.lower(), layer)
+            names.setdefault(normalize(layer.name), layer)
 
         for _pass in range(3):
             changed = False
             for relationship in self.workspace.relationships:
                 if relationship.is_attachment:
                     continue
-                child = names.get(relationship.destination.lower())
-                parent = names.get(relationship.origin.lower())
+                child = names.get(relationship.destination.lower()) or names.get(
+                    normalize(relationship.destination)
+                )
+                parent = names.get(relationship.origin.lower()) or names.get(
+                    normalize(relationship.origin)
+                )
                 if child is None or parent is None:
                     continue
                 if child.name in plan.filters or parent.name not in plan.filters:

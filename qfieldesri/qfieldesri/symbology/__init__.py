@@ -27,6 +27,7 @@ oficina o un color inventado.
 
 import os
 
+from ..core.naming import find as find_class
 from ..profiles import STYLE_SUFFIX
 from . import defaults
 from .model import (
@@ -140,17 +141,11 @@ class SymbologyResolver(object):
             return None
         style = self.imported.get(layer_name)
         if style is None:
-            # Los archivos de capa suelen llamarse como la clase pero con el
-            # nombre calificado o con el alias; se prueba sin distinguir
-            # mayusculas y quitando el esquema de la geodatabase corporativa.
-            lowered = layer_name.lower()
-            short = lowered.split(".")[-1]
-            for name, candidate in self.imported.items():
-                if (
-                    name.lower() in (lowered, short)
-                    or name.lower().split(".")[-1] == short
-                ):
-                    return candidate
+            # El archivo de capa se llama como la clase, pero puede traer el
+            # nombre calificado de la geodatabase corporativa, o no traerlo.
+            match = find_class(self.imported, layer_name)
+            if match is not None:
+                return self.imported[match]
         return style
 
     # ------------------------------------------------------------------

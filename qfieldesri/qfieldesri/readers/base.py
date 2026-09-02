@@ -87,8 +87,16 @@ class GeodatabaseReader(object):
         return None, None
 
     # -- escritura (sincronizacion de vuelta) ---------------------------
-    def start_editing(self):
-        """Abre una sesion de edicion (obligatoria en SDE versionado)."""
+    def start_editing(self, versioned=None):
+        """Abre una sesion de edicion.
+
+        ``versioned`` dice si los datos que se van a editar estan registrados
+        como versionados. Importa solo en una geodatabase corporativa, y ahi
+        importa mucho: ArcGIS abre la sesion de una forma para datos
+        versionados y de otra para datos no versionados, y equivocarse no da
+        un aviso, da un error. ``None`` significa "deducelo de la
+        geodatabase".
+        """
 
     def stop_editing(self, save=True):
         """Cierra la sesion de edicion."""

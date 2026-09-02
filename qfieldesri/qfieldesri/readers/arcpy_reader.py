@@ -274,6 +274,7 @@ class ArcpyReader(GeodatabaseReader):
             oid_field=getattr(description, "OIDFieldName", "OBJECTID"),
             globalid_field=getattr(description, "globalIDFieldName", "") or None,
             feature_dataset=feature_dataset,
+            is_versioned=bool(getattr(description, "isVersioned", False)),
         )
 
     def _read_subtypes(self, path):
@@ -344,10 +345,30 @@ class ArcpyReader(GeodatabaseReader):
         )
 
     def _is_versioned(self):
-        description = self._describe(self.workspace)
-        return bool(getattr(description, "connectionProperties", None)) and bool(
-            getattr(description, "version", None)
-        )
+        """Si los datos de esta conexion estan registrados como versionados.
+
+        El versionado es una propiedad **de cada dataset**, no del workspace,
+        asi que se pregunta a las clases: basta con que una este versionada
+        para que la sesion de edicion tenga que abrirse en ese modo. Si no se
+        puede saber (permisos, clase ilegible), se supone que si, que es el
+        modo habitual de una geodatabase corporativa.
+        """
+        if self.workspace_type() != WorkspaceInfo.ENTERPRISE:
+            return False
+
+        checked = False
+        for path, _dataset in self.list_datasets():
+            try:
+                description = self._describe(path)
+            except Exception:  # noqa: S112 - una clase ilegible no decide nada
+                continue
+            versioned = getattr(description, "isVersioned", None)
+            if versioned is None:
+                continue
+            checked = True
+            if versioned:
+                return True
+        return not checked
 
     # ------------------------------------------------------------------
     # lectura de entidades
@@ -365,8 +386,8 @@ class ArcpyReader(GeodatabaseReader):
 
         layer_name = "qfe_%s" % abs(hash(layer_info.path))
         if arcpy.Exists(layer_name):
-            arcpy.management.Delete(layer_name)
-        arcpy.management.MakeFeatureLayer(
+            arcpy.Delete_management(layer_name)
+        arcpy.MakeFeatureLayer_management(
             layer_info.path, layer_name, where_clause or ""
         )
         spatial_reference = None
@@ -376,8 +397,8 @@ class ArcpyReader(GeodatabaseReader):
             spatial_reference = arcpy.SpatialReference(
                 layer_info.spatial_reference.code
             )
-        aoi = arcpy.FromWKT(aoi_wkt, spatial_reference)
-        arcpy.management.SelectLayerByLocation(
+        aoi = _geometry_from_wkt(aoi_wkt, spatial_reference)
+        arcpy.SelectLayerByLocation_management(
             layer_name, "INTERSECT", aoi, "", "NEW_SELECTION"
         )
         return layer_name, layer_name
@@ -421,26 +442,26 @@ class ArcpyReader(GeodatabaseReader):
                         break
         finally:
             if temporary and arcpy.Exists(temporary):
-                arcpy.management.Delete(temporary)
+                arcpy.Delete_management(temporary)
 
     def count_features(self, layer_info, where_clause=None):
         if where_clause:
             layer_name = "qfe_count_%s" % abs(hash(layer_info.path))
             if arcpy.Exists(layer_name):
-                arcpy.management.Delete(layer_name)
+                arcpy.Delete_management(layer_name)
             if layer_info.is_spatial:
-                arcpy.management.MakeFeatureLayer(
+                arcpy.MakeFeatureLayer_management(
                     layer_info.path, layer_name, where_clause
                 )
             else:
-                arcpy.management.MakeTableView(
+                arcpy.MakeTableView_management(
                     layer_info.path, layer_name, where_clause
                 )
             try:
-                return int(arcpy.management.GetCount(layer_name)[0])
+                return int(arcpy.GetCount_management(layer_name)[0])
             finally:
-                arcpy.management.Delete(layer_name)
-        return int(arcpy.management.GetCount(layer_info.path)[0])
+                arcpy.Delete_management(layer_name)
+        return int(arcpy.GetCount_management(layer_info.path)[0])
 
     def delimit_field(self, layer_info, name):
         return arcpy.AddFieldDelimiters(layer_info.path, name)
@@ -469,23 +490,48 @@ class ArcpyReader(GeodatabaseReader):
     # ------------------------------------------------------------------
     # escritura (sincronizacion de vuelta)
     # ------------------------------------------------------------------
-    def start_editing(self):
+    def start_editing(self, versioned=None):
         """Abre una sesion de edicion.
 
-        En una File Geodatabase es opcional; en una geodatabase corporativa
-        versionada es obligatorio, y ademas es lo que permite deshacer todo el
-        lote si algo falla a mitad.
+        En una File Geodatabase la sesion es opcional pero conviene: agrupa el
+        lote y permite descartarlo entero. En una geodatabase corporativa es
+        obligatoria, y **hay que abrirla de la forma correcta**:
+
+        ``arcpy.da.Editor.startEditing(with_undo, multiuser_mode)``
+
+        ``multiuser_mode`` no significa "hay varios usuarios": significa que
+        los datos estan **registrados como versionados**. Si se edita una
+        clase no versionada de Oracle con ``multiuser_mode=True`` —o al reves—
+        ArcGIS no avisa: falla. Por eso se deduce del propio dataset
+        (``Describe.isVersioned``) salvo que la llamada lo indique.
+
+        El deshacer se activa siempre que se pueda: si el lote falla a mitad,
+        la geodatabase de origen tiene que quedar como estaba.
         """
         editor_class = getattr(arcpy.da, "Editor", None)
         if editor_class is None:  # pragma: no cover - ArcGIS 10.0
             return
+        if versioned is None:
+            versioned = self._workspace_is_versioned()
+
         self._editor = editor_class(self.workspace)
-        with_undo = self.workspace_type() == WorkspaceInfo.ENTERPRISE
         try:
-            self._editor.startEditing(False, with_undo)
-        except TypeError:  # pragma: no cover - firma antigua
-            self._editor.startEditing(False)
+            self._editor.startEditing(True, versioned)
+        except TypeError:  # pragma: no cover - ArcGIS 10.0/10.1, firma corta
+            self._editor.startEditing(True)
         self._editor.startOperation()
+
+    def _workspace_is_versioned(self):
+        """``True`` si lo que se va a editar esta registrado como versionado.
+
+        En una File Geodatabase no existe el versionado, pero ArcGIS espera
+        ``multiuser_mode=True`` igualmente: es el modo normal de edicion. El
+        caso que hay que detectar es el contrario, la geodatabase corporativa
+        con datos **no** versionados, que exige ``False``.
+        """
+        if self.workspace_type() != WorkspaceInfo.ENTERPRISE:
+            return True
+        return self._is_versioned()
 
     def stop_editing(self, save=True):
         if self._editor is None:
@@ -539,6 +585,55 @@ class ArcpyReader(GeodatabaseReader):
 
 
 # ----------------------------------------------------------------------
+#: Clase de entidad temporal donde se construye el poligono del sector cuando
+#: la version de ArcGIS no sabe leer WKT directamente.
+_WKT_SCRATCH = "in_memory/qfe_aoi"
+
+
+def _geometry_from_wkt(wkt, spatial_reference):
+    """Construye una geometria a partir de su WKT.
+
+    ``arcpy.FromWKT`` no existe en ArcGIS Desktop 10.x: se anadio en Pro. Como
+    el destino principal de qfieldESRI es ArcMap, aqui hay una alternativa que
+    si funciona en 10.1 en adelante: escribir el WKT en una clase temporal en
+    memoria con un cursor —``SHAPE@WKT`` es un token reconocido— y leer de
+    vuelta la geometria ya construida.
+    """
+    from_wkt = getattr(arcpy, "FromWKT", None)
+    if from_wkt is not None:
+        return from_wkt(wkt, spatial_reference)
+
+    if arcpy.Exists(_WKT_SCRATCH):
+        arcpy.Delete_management(_WKT_SCRATCH)
+    workspace, name = _WKT_SCRATCH.split("/")
+    arcpy.CreateFeatureclass_management(
+        workspace,
+        name,
+        _wkt_geometry_type(wkt),
+        spatial_reference=spatial_reference,
+    )
+    try:
+        with arcpy.da.InsertCursor(_WKT_SCRATCH, ["SHAPE@WKT"]) as cursor:
+            cursor.insertRow([wkt])
+        with arcpy.da.SearchCursor(_WKT_SCRATCH, ["SHAPE@"]) as cursor:
+            for (geometry,) in cursor:
+                return geometry
+    finally:
+        if arcpy.Exists(_WKT_SCRATCH):
+            arcpy.Delete_management(_WKT_SCRATCH)
+    raise ReaderError("No se pudo construir el area de interes a partir del WKT.")
+
+
+def _wkt_geometry_type(wkt):
+    """Tipo de la clase temporal, deducido del propio WKT."""
+    head = (wkt or "").strip().upper()
+    if head.startswith(("POINT", "MULTIPOINT")):
+        return "POINT"
+    if head.startswith(("LINESTRING", "MULTILINESTRING")):
+        return "POLYLINE"
+    return "POLYGON"
+
+
 def _keys_of(description, role):
     return [
         key[0] for key in getattr(description, "originClassKeys", []) if key[1] == role

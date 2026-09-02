@@ -12,7 +12,7 @@ qfieldESRI soporta los dos porque en la practica conviven:
     habilitados los adjuntos de ArcGIS.
 ``adjunto``
     Los archivos se registran como **attachments** de la geodatabase con
-    ``arcpy.management.AddAttachments``. Requiere que la clase tenga los
+    ``arcpy.AddAttachments_management``. Requiere que la clase tenga los
     adjuntos habilitados y que exista GlobalID.
 """
 
@@ -135,8 +135,8 @@ def attach_with_arcpy(layer_path, key_field, match_table, progress=None):
 
     progress = progress or (lambda message: None)
     progress("Registrando adjuntos en %s" % layer_path)
-    arcpy.management.EnableAttachments(layer_path)
-    arcpy.management.AddAttachments(
+    arcpy.EnableAttachments_management(layer_path)
+    arcpy.AddAttachments_management(
         layer_path,
         key_field,
         match_table,

@@ -99,6 +99,8 @@ class SyncReport(object):
         self.workspace = workspace
         self.changes = []
         self.errors = []
+        #: Explicaciones de lo que no se comparo y por que.
+        self.notes = []
         self.started_at = datetime.datetime.now()
         self.dry_run = True
 
@@ -136,6 +138,7 @@ class SyncReport(object):
             "summary": self.summary(),
             "changes": [change.to_dict() for change in self.changes],
             "errors": self.errors,
+            "notes": self.notes,
         }
 
     def format(self):
@@ -148,6 +151,8 @@ class SyncReport(object):
             "Aplicados:      %d" % summary["aplicados"],
             "Errores:        %d" % summary["errores"],
         ]
+        for note in self.notes:
+            lines.append("  %s" % note)
         for change in self.conflicts:
             lines.append(
                 "  CONFLICTO %s/%s (%s): %s"
@@ -215,7 +220,15 @@ class Synchronizer(object):
         return report
 
     def apply(self, report=None):
-        """Aplica a la geodatabase los cambios detectados."""
+        """Aplica a la geodatabase los cambios detectados.
+
+        Un fallo puntual —un registro bloqueado por otro editor, un valor que
+        el dominio rechaza— no tumba el lote: se anota en el informe y se
+        sigue, porque descartar quinientas capturas buenas por una mala no le
+        sirve a nadie. Lo que si es todo o nada es el cierre de la sesion: si
+        la geodatabase rechaza guardar, no queda nada aplicado y hay que
+        decirlo con esas palabras.
+        """
         if not self.reader.supports_write:
             raise SyncError(
                 "El motor de lectura '%s' no puede escribir en la "
@@ -226,7 +239,7 @@ class Synchronizer(object):
         report.dry_run = False
 
         layers = dict((entry["table"], entry) for entry in self.manifest["layers"])
-        self.reader.start_editing()
+        self.reader.start_editing(versioned=self._versioned())
         try:
             for change in report.changes:
                 entry = layers[change.table]
@@ -238,12 +251,55 @@ class Synchronizer(object):
                     )
                     continue
                 self._apply_change(change, entry, layer_info, report)
+        except Exception as error:
+            self._discard(report, "Se revirtieron los cambios: %s" % error)
+            raise
+
+        try:
             self.reader.stop_editing(save=True)
         except Exception as error:
-            self.reader.stop_editing(save=False)
-            report.errors.append("Se revirtieron los cambios: %s" % error)
-            raise
+            self._discard(
+                report,
+                "La geodatabase rechazo guardar la sesion de edicion, asi que "
+                "no se aplico ningun cambio: %s" % error,
+            )
+            raise SyncError(
+                "No se pudo guardar la sesion de edicion en %s: %s"
+                % (self.reader.workspace, error)
+            )
+
+        if self._versioned() and self.workspace_info.is_enterprise:
+            report.notes.append(
+                "Los cambios quedaron en la version del archivo de conexion. "
+                "Reconcilie y publique (Reconcile / Post) para que lleguen a "
+                "DEFAULT."
+            )
         return report
+
+    def _discard(self, report, message):
+        """Cierra la sesion sin guardar y deja constancia de que no se aplico nada."""
+        try:
+            self.reader.stop_editing(save=False)
+        except Exception as error:
+            report.errors.append("Tampoco se pudo cerrar la sesion: %s" % error)
+        for change in report.changes:
+            change.applied = False
+        report.errors.append(message)
+
+    def _versioned(self):
+        """Si las clases que se van a tocar estan registradas como versionadas.
+
+        Decide como se abre la sesion de edicion. Se responde con lo que ya se
+        leyo de la geodatabase, en lugar de dejar que el lector vuelva a
+        recorrerla: en una corporativa grande, ese recorrido cuesta.
+        """
+        if self.workspace_info is None:
+            return None
+        if not self.workspace_info.is_enterprise:
+            # En una File Geodatabase no hay versionado; ArcGIS espera de
+            # todos modos el modo de edicion normal.
+            return True
+        return any(layer.is_versioned for layer in self.workspace_info.layers)
 
     # ------------------------------------------------------------------
     def _require_baseline(self, connection):
@@ -259,6 +315,16 @@ class Synchronizer(object):
             )
 
     def _detect_layer(self, connection, entry, report):
+        if entry.get("read_only"):
+            # Se empaqueto como contexto: QField no la deja editar y aqui
+            # tampoco se lee, para que un paquete manipulado no pueda colar
+            # cambios en una clase que se declaro de solo lectura.
+            report.notes.append(
+                "%s se llevo como contexto de solo lectura: no se compara."
+                % entry["source_class"]
+            )
+            return
+
         table = entry["table"]
         writable = entry["writable_fields"]
         key_field = entry["key_field"]

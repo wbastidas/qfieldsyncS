@@ -36,12 +36,18 @@ PRO_PATTERNS = (
     os.path.expanduser(r"~\AppData\Local\ESRI\conda\envs\*\python.exe"),
 )
 
-#: Rutas de ArcMap 10.x (Python 2.7 de 32 y 64 bits).
+#: Rutas de ArcMap 10.x (Python 2.7 de 32 y 64 bits). ``ArcGIS10.x`` es el
+#: interprete normal; ``ArcGISx6410.x`` el del geoprocesamiento en segundo
+#: plano, que tambien trae arcpy.
 ARCMAP_PATTERNS = (
     r"C:\Python27\ArcGIS*\python.exe",
     r"C:\Python27\ArcGISx64*\python.exe",
     r"C:\Python27\python.exe",
 )
+
+#: Versiones de ArcGIS Desktop que se buscan en el registro, de la mas nueva a
+#: la mas antigua. 10.4 es la primera con la que se ha probado qfieldESRI.
+DESKTOP_VERSIONS = ("10.8", "10.7", "10.6", "10.5", "10.4")
 
 
 class LauncherError(Exception):
@@ -70,6 +76,22 @@ def has_arcpy(python_executable=None):
     return code == 0
 
 
+def _registry_keys():
+    r"""Claves del registro donde ESRI declara donde vive su Python.
+
+    ArcGIS Desktop lo publica en ``SOFTWARE\ESRI\Python10.x`` con el valor
+    ``PythonDir``, que apunta a la carpeta que contiene ``ArcGIS10.x`` (o
+    ``ArcGISx6410.x`` si esta instalado el geoprocesamiento de 64 bits); ese
+    es el camino bueno para ArcMap. ``Desktop10.x`` / ``InstallDir`` se
+    consulta como respaldo, y ``ArcGISPro`` para quien tenga Pro.
+    """
+    keys = [(r"SOFTWARE\ESRI\ArcGISPro", "InstallDir")]
+    for version in DESKTOP_VERSIONS:
+        keys.append((r"SOFTWARE\ESRI\Python%s" % version, "PythonDir"))
+        keys.append((r"SOFTWARE\ESRI\Desktop%s" % version, "InstallDir"))
+    return keys
+
+
 def _from_registry():
     """Instalaciones de ArcGIS declaradas en el registro de Windows."""
     try:
@@ -80,29 +102,45 @@ def _from_registry():
         except ImportError:
             return []
 
+    # ArcGIS Desktop es una aplicacion de 32 bits: en un Windows de 64 bits sus
+    # claves viven en la vista de 32 bits. Se miran las dos, porque el
+    # lanzador puede estar corriendo en cualquiera de los dos interpretes.
+    views = [0]
+    for flag in ("KEY_WOW64_32KEY", "KEY_WOW64_64KEY"):
+        value = getattr(winreg, flag, None)
+        if value is not None:
+            views.append(value)
+
     candidates = []
-    keys = (
-        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\ESRI\ArcGISPro", "InstallDir"),
-        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\ESRI\Desktop10.8", "PythonDir"),
-        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\ESRI\Desktop10.7", "PythonDir"),
-        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\ESRI\Desktop10.6", "PythonDir"),
-        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\ESRI\Desktop10.5", "PythonDir"),
-    )
-    for root, path, value_name in keys:
-        try:
-            with winreg.OpenKey(root, path) as key:
-                install_dir = winreg.QueryValueEx(key, value_name)[0]
-        except OSError:
-            continue
-        if not install_dir:
-            continue
-        candidates.extend(
-            glob.glob(
-                os.path.join(install_dir, "bin", "Python", "envs", "*", "python.exe")
+    for path, value_name in _registry_keys():
+        for view in views:
+            directory = _registry_value(winreg, path, value_name, view)
+            if not directory:
+                continue
+            # ArcGIS Pro: entornos de conda bajo bin\Python\envs.
+            candidates.extend(
+                glob.glob(
+                    os.path.join(directory, "bin", "Python", "envs", "*", "python.exe")
+                )
             )
-        )
-        candidates.extend(glob.glob(os.path.join(install_dir, "*", "python.exe")))
+            # ArcMap: C:\Python27\ArcGIS10.6\python.exe y su gemelo de 64 bits.
+            candidates.extend(glob.glob(os.path.join(directory, "*", "python.exe")))
+            candidates.extend(glob.glob(os.path.join(directory, "python.exe")))
     return candidates
+
+
+def _registry_value(winreg, path, value_name, view):
+    """Lee un valor del registro, o ``None`` si no esta."""
+    try:
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path, 0, winreg.KEY_READ | view)
+    except (OSError, EnvironmentError):  # noqa: UP024 - 2.7 lanza WindowsError
+        return None
+    try:
+        return winreg.QueryValueEx(key, value_name)[0]
+    except (OSError, EnvironmentError):  # noqa: UP024
+        return None
+    finally:
+        key.Close()
 
 
 def find_python(check_arcpy=True):
@@ -137,11 +175,15 @@ def describe_search():
         "Se busco en:\n"
         "  - la variable de entorno %s\n"
         "  - el interprete actual (%s)\n"
-        "  - el registro de Windows (ArcGIS Pro y ArcMap 10.5 a 10.8)\n"
+        "  - el registro de Windows (ArcGIS Pro y ArcGIS Desktop 10.4 a 10.8)\n"
         "  - las rutas habituales de instalacion\n\n"
-        "Solucion: defina %s con la ruta completa de python.exe, por ejemplo\n"
+        "Solucion: defina %s con la ruta completa de python.exe. En ArcMap\n"
+        "suele ser\n"
+        "  set %s=C:\\Python27\\ArcGIS10.6\\python.exe\n"
+        "y en ArcGIS Pro\n"
         "  set %s=C:\\Program Files\\ArcGIS\\Pro\\bin\\Python\\envs\\"
-        "arcgispro-py3\\python.exe" % (ENV_VAR, sys.executable, ENV_VAR, ENV_VAR)
+        "arcgispro-py3\\python.exe"
+        % (ENV_VAR, sys.executable, ENV_VAR, ENV_VAR, ENV_VAR)
     )
 
 

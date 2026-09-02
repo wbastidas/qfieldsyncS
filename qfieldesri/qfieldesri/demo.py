@@ -422,3 +422,56 @@ def build_reader():
         ],
     )
     return reader
+
+
+# ----------------------------------------------------------------------
+# La misma geodatabase, vista desde una corporativa de Oracle con ArcSDE
+# ----------------------------------------------------------------------
+#: Propietario del esquema con el que Oracle califica las clases. En una
+#: geodatabase corporativa la conexion determina como se llama cada clase:
+#: ``GYE.POSTE`` con un usuario, ``SDE.POSTE`` con otro.
+DEFAULT_OWNER = "GYE"
+
+
+def qualify(name, owner=DEFAULT_OWNER):
+    """Nombre de la clase tal como lo devuelve Oracle: calificado y en mayusculas."""
+    return "%s.%s" % (owner.upper(), name.upper())
+
+
+def build_enterprise_reader(owner=DEFAULT_OWNER, versioned=True):
+    """La demostracion, pero nombrada como una geodatabase corporativa.
+
+    Es exactamente el mismo modelo y los mismos datos: lo unico que cambia es
+    la etiqueta con la que el servidor nombra cada clase. Sirve para
+    comprobar, sin ArcGIS ni Oracle delante, que el perfil, el ambito, la
+    simbologia y —sobre todo— la sincronizacion de vuelta siguen reconociendo
+    las clases cuando llegan calificadas y en mayusculas.
+    """
+    reader = build_reader()
+    workspace = reader.workspace_info
+
+    renamed = {}
+    for layer in workspace.layers:
+        renamed[layer.name] = qualify(layer.name, owner)
+
+    for layer in workspace.layers:
+        original = layer.name
+        layer.name = renamed[original]
+        if layer.path:
+            layer.path = renamed[original]
+        if original in reader.data:
+            reader.data[layer.name] = reader.data.pop(original)
+
+    for relationship in workspace.relationships:
+        relationship.name = qualify(relationship.name, owner)
+        relationship.origin = renamed.get(relationship.origin, relationship.origin)
+        relationship.destination = renamed.get(
+            relationship.destination, relationship.destination
+        )
+
+    workspace.path = "Database Connections/GYE_PRODUCCION.sde"
+    workspace.workspace_type = WorkspaceInfo.ENTERPRISE
+    workspace.is_versioned = versioned
+    for layer in workspace.layers:
+        layer.is_versioned = versioned
+    return reader

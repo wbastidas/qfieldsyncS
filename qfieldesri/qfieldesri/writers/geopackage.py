@@ -59,6 +59,24 @@ def esri_type_to_gpkg(esri_type, length=None):
     return "TEXT"
 
 
+def _binary_types():
+    """Lo que cuenta como binario en cada version de Python.
+
+    En el 2.7 de ArcMap un BLOB puede llegar como ``buffer``, tipo que en
+    Python 3 no existe.
+    """
+    types = [bytearray, memoryview]
+    try:
+        # ``buffer`` solo existe en Python 2.7; en 3.x levanta NameError.
+        types.append(buffer)
+    except NameError:
+        pass
+    return tuple(types)
+
+
+_BINARY_TYPES = _binary_types()
+
+
 def adapt_value(value):
     """Convierte un valor de arcpy/ogr a algo que sqlite3 sepa guardar."""
     if value is None:
@@ -71,7 +89,7 @@ def adapt_value(value):
         )
     if isinstance(value, datetime.date):
         return value.strftime("%Y-%m-%d")
-    if isinstance(value, (bytearray, memoryview)):
+    if isinstance(value, _BINARY_TYPES):
         return sqlite3.Binary(bytes(value))
     if isinstance(value, bool):
         return 1 if value else 0

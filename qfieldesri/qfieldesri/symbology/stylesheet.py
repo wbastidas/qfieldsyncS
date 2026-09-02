@@ -41,6 +41,7 @@ import io
 import json
 import os
 
+from ..core.naming import normalize as normalize_class
 from . import defaults
 from .model import (
     Category,
@@ -76,7 +77,10 @@ class StyleSheet(object):
         self.layers = data.get("capas") or {}
         #: se aplica a las clases que no tengan entrada propia
         self.default = data.get("por_defecto") or {}
-        self._lower = dict((name.lower(), name) for name in self.layers)
+        self._lower = {}
+        for name in self.layers:
+            self._lower.setdefault(name.lower(), name)
+            self._lower.setdefault(normalize_class(name), name)
 
     # ------------------------------------------------------------------
     @classmethod
@@ -113,10 +117,21 @@ class StyleSheet(object):
 
     # ------------------------------------------------------------------
     def knows(self, layer_name):
-        return (layer_name or "").lower() in self._lower
+        return self._key_for(layer_name) is not None
+
+    def _key_for(self, layer_name):
+        """Entrada del estilo que corresponde a esa clase.
+
+        El estilo se escribe con el nombre corto de la clase (``Barra``); la
+        geodatabase corporativa la nombra ``GYE.BARRA``. Es la misma capa.
+        """
+        key = self._lower.get((layer_name or "").lower())
+        if key is None:
+            key = self._lower.get(normalize_class(layer_name))
+        return key
 
     def definition_for(self, layer_name):
-        key = self._lower.get((layer_name or "").lower())
+        key = self._key_for(layer_name)
         if key is None:
             return dict(self.default) if self.default else None
         definition = dict(self.default)
@@ -146,6 +161,7 @@ class StyleSheet(object):
         """Guarda un estilo ya resuelto, para poder exportarlo como plantilla."""
         self.layers[layer_name] = describe_layer_style(style, geometry_type)
         self._lower[layer_name.lower()] = layer_name
+        self._lower.setdefault(normalize_class(layer_name), layer_name)
 
     def __len__(self):
         return len(self.layers)

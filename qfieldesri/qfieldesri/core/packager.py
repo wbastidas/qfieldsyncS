@@ -40,6 +40,7 @@ from .model import (
     DomainInfo,
     SpatialReferenceInfo,
 )
+from .naming import normalize as normalize_class
 from .scope import LayerFilter, ScopeResolver, combine
 
 MANIFEST_NAME = "qfieldesri_manifest.json"
@@ -335,21 +336,23 @@ class Packager(object):
         Sin esto el tecnico veria el poste pero no las estructuras montadas en
         el, que es justo lo que va a revisar en campo.
         """
-        names = set(layer.name.lower() for layer in selected)
+        # Se comparan clases, no cadenas: en una geodatabase corporativa la
+        # relacion puede nombrarlas con otra calificacion.
+        names = set(normalize_class(layer.name) for layer in selected)
         result = list(selected)
         for relationship in self.workspace.relationships:
             if relationship.is_attachment:
                 continue
-            if relationship.origin.lower() not in names:
+            if normalize_class(relationship.origin) not in names:
                 continue
             destination = self.workspace.layer(relationship.destination)
-            if destination is None or destination.name.lower() in names:
+            if destination is None or normalize_class(destination.name) in names:
                 continue
-            config = self.config.layers.get(destination.name)
+            config = self.config.find_layer_config(destination.name)
             if config is not None and not config.is_included:
                 continue
             result.append(destination)
-            names.add(destination.name.lower())
+            names.add(normalize_class(destination.name))
         return result
 
     def _project_crs(self, layers):
@@ -463,6 +466,10 @@ class Packager(object):
             "subtype_field": layer_info.subtype_field,
             "where_clause": config.where_clause,
             "action": config.action,
+            # Una capa de contexto no se escribe de vuelta jamas, ni aunque el
+            # GeoPackage llegue modificado: en una red electrica, lo que viaja
+            # como referencia no puede terminar editando la base de origen.
+            "read_only": config.action == LayerAction.READ_ONLY,
             "attachment_fields": dict(config.attachment_fields),
             "writable_fields": writable,
             "exported_fields": [field.name for field in exported],
@@ -942,13 +949,14 @@ class Packager(object):
     # ------------------------------------------------------------------
     def _add_relations(self, project, layers, manifest):
         tables = dict(
-            (layer.name.lower(), _sanitize_table(layer.name)) for layer in layers
+            (normalize_class(layer.name), _sanitize_table(layer.name))
+            for layer in layers
         )
         for relationship in self.workspace.relationships:
             if relationship.is_attachment:
                 continue
-            parent = tables.get(relationship.origin.lower())
-            child = tables.get(relationship.destination.lower())
+            parent = tables.get(normalize_class(relationship.origin))
+            child = tables.get(normalize_class(relationship.destination))
             if not parent or not child:
                 continue
             parent_layer = self.workspace.layer(relationship.origin)

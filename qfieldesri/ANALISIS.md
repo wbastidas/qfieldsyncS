@@ -61,9 +61,33 @@ qfieldESRI es una **carpeta que se copia y se abre con doble clic**. El
 lanzador (`qfieldesri/launcher.py`) resuelve el único detalle incómodo: `arcpy`
 solo funciona con el intérprete que instala ArcGIS, y ese intérprete no está en
 el `PATH`. Lo busca en la variable `QFIELDESRI_PYTHON`, en el intérprete actual,
-en el registro de Windows (ArcGIS Pro y ArcMap 10.5–10.8) y en las rutas
-habituales; si no lo encuentra, explica exactamente qué definir en vez de fallar
-con un `ImportError` a media ejecución.
+en el registro de Windows y en las rutas habituales; si no lo encuentra, explica
+exactamente qué definir en vez de fallar con un `ImportError` a media ejecución.
+
+En el registro se consultan las claves donde ESRI publica de verdad la ruta:
+`SOFTWARE\ESRI\Python10.x` → `PythonDir` para ArcGIS Desktop (que apunta a
+`C:\Python27\`, con `ArcGIS10.x` y `ArcGISx6410.x` dentro) y
+`SOFTWARE\ESRI\ArcGISPro` → `InstallDir` para Pro. Se miran las dos vistas del
+registro, la nativa y la de 32 bits, porque ArcMap es una aplicación de 32 bits
+y sus claves viven en la vista de 32 bits de un Windows de 64.
+
+### 3.1 ArcMap manda, Pro se admite
+
+El objetivo es **ArcGIS Desktop**, cuyo Python es **2.7** y no va a cambiar.
+Pro se admite, pero no dicta el código: una sola *f-string* o una llamada que
+solo exista en Pro y el programa deja de arrancar en la mitad de las
+instalaciones a las que va dirigido —y el fallo no aparece en desarrollo, sino
+en el equipo del técnico—.
+
+Esa restricción se sostiene con dos decisiones y dos pruebas. Las decisiones:
+escribir el árbol entero en el subconjunto que 2.7 entiende (sin f-strings, sin
+anotaciones, `class X(object)`, `io.open`, formateo con `%`) y llamar a las
+herramientas de arcpy por la forma que existe en las dos versiones
+(`arcpy.Delete_management`, no `arcpy.management.Delete`). Las pruebas
+—descritas en la sección 9— recorren todo el código y fallan si algo de eso se
+rompe. Donde una función solo existe en una versión, se pregunta antes: por eso
+`arcpy.FromWKT` (que es de Pro) tiene alternativa para ArcMap, construida con
+un cursor sobre una clase temporal en memoria.
 
 Aun así se ofrecen las tres puertas de entrada, porque cada una tiene su
 momento: la **aplicación** para el uso normal, la **caja de herramientas** para
@@ -310,14 +334,60 @@ Python de ArcGIS suele requerir permisos de administrador. Al subir se omite el
 manifiesto por omisión: contiene rutas de servidor y el nombre de la conexión,
 que no tienen por qué salir de la organización.
 
-## 6. La geodatabase corporativa
+## 6. La geodatabase corporativa: Oracle 11gR2 con ArcSDE
 
 El requisito de "dejarlo abierto a SDE" no se resolvió con un parámetro sino con
-una separación. Para el lector de arcpy, una `.gdb` y un `.sde` se abren igual;
-lo único que cambia es que en SDE se detecta el versionado, la sesión de edición
-se abre con deshacer, el recorte por área de interés aprovecha el índice
-espacial del servidor y los nombres calificados (`GYE.SDE.Barra`) se normalizan
-al crear las tablas.
+una separación. Para el lector de arcpy, una `.gdb` y un `.sde` se abren igual.
+Lo que de verdad cambia son dos cosas, y las dos importan.
+
+### 6.1 Cómo se llama una clase
+
+Oracle guarda los nombres en mayúsculas y ArcSDE los califica con el usuario
+propietario: `EstructuraSoporte` llega como `GYE.ESTRUCTURASOPORTE`, y con otra
+conexión como `SDE.ESTRUCTURASOPORTE`. Es la misma clase con otra etiqueta.
+
+Si esa etiqueta se tratara como identidad, contra una base corporativa fallaría
+todo en cadena y en silencio: el perfil no reconocería ninguna clase (ni
+categorías de campo, ni pares Puesto/Unidad), el ámbito no encontraría el campo
+de alimentador, la simbología no casaría y —lo más grave— la sincronización de
+vuelta no encontraría la clase de destino del material capturado.
+
+Por eso hay un único sitio (`core/naming.py`) que decide cuándo dos nombres
+designan la misma clase, y por él pasan todas las comparaciones: el perfil, la
+configuración por capa, el ámbito, la simbología, el arrastre de tablas
+relacionadas y la vuelta. La coincidencia exacta tiene prioridad —si hay dos
+esquemas cargados hay que respetar el que se pidió— y solo después se afloja.
+
+Efecto práctico: **un paquete generado con una conexión se sincroniza con
+otra**, que es exactamente lo que pasa cuando se empaqueta en campo y se aplica
+desde la oficina.
+
+### 6.2 Cómo se abre la sesión de edición
+
+`arcpy.da.Editor.startEditing(with_undo, multiuser_mode)`. El segundo argumento
+no significa "hay varios usuarios": significa que los datos están **registrados
+como versionados**. Si se edita una clase no versionada de Oracle en modo
+versionado —o al revés— ArcGIS no avisa: falla.
+
+El versionado es una propiedad de cada dataset, no del workspace, así que se
+lee de las clases (`Describe.isVersioned`) y la verificación previa lo dice
+antes de empezar: con clases versionadas hay que reconciliar y publicar después
+de sincronizar; sin ellas se escribe directo en las tablas base y conviene
+respaldar antes.
+
+Un fallo puntual —un registro bloqueado por otro editor, un valor que el
+dominio rechaza— se anota y no tumba el lote: descartar quinientas capturas
+buenas por una mala no le sirve a nadie. Lo que sí es todo o nada es el cierre:
+si la base rechaza guardar la sesión, no queda nada aplicado y el informe lo
+dice con esas palabras.
+
+### 6.3 Lo demás
+
+El recorte por área de interés aprovecha el índice espacial del servidor; los
+nombres calificados se normalizan al crear las tablas del paquete (en el
+dispositivo nadie quiere ver `GYE.ESTRUCTURASOPORTE`); las listas del ámbito se
+trocean en bloques de 900 porque el `IN` de Oracle corta en 1000; y una clase
+ilegible por permisos no tumba el análisis completo.
 
 ## 7. El perfil: lo que la geodatabase no sabe de sí misma
 
@@ -349,7 +419,7 @@ los campos por heurística de nombre.
 
 ## 9. Verificación
 
-281 pruebas que se ejecutan **sin ArcGIS instalado**, sobre una geodatabase de
+316 pruebas que se ejecutan **sin ArcGIS instalado**, sobre una geodatabase de
 demostración en memoria que reproduce un fragmento real del modelo (poste, tramo
 MT con subtipos, puesto de transformación con sus transformadores y la tabla de
 alimentador cabecera con tres alimentadores repartidos en tres subestaciones):
@@ -365,7 +435,19 @@ archivo de estilo, precedencia entre fuentes y serialización), el empaquetado
 completo, los adjuntos,
 el ciclo de vuelta con detección de conflictos, la caja de herramientas de
 ArcGIS (cargada con un `arcpy` simulado), la lógica de la aplicación de
-escritorio, el lanzador y el guardia de dependencias.
+escritorio, el lanzador y el camino completo contra una geodatabase corporativa
+con los nombres calificados de Oracle.
+
+Tres de esas pruebas no comprueban comportamiento sino **superficie**, porque
+es donde un error no se ve hasta que el programa está en el equipo del técnico:
+
+- ninguna importación de QGIS, Qt ni dependencias externas no declaradas;
+- ninguna sintaxis que el **Python 2.7 de ArcMap** no sepa leer (f-strings,
+  anotaciones, `super()` sin argumentos, desempaquetado PEP 448, `yield from`,
+  `raise ... from`) ni módulos de Python 3 sin respaldo;
+- ninguna llamada de `arcpy` que solo exista en **ArcGIS Pro** —`arcpy.FromWKT`
+  o el módulo `arcpy.management`—, y `arcpy.mp` / `arcpy.mapping` siempre
+  consultados con `hasattr` antes de usarse.
 
 Para editar un GeoPackage con `sqlite3` puro —lo que hacen las pruebas, y lo que
 puede necesitar cualquier script— hace falta registrar las funciones `ST_*` que

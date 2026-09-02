@@ -28,6 +28,7 @@ from ..core.model import (
     CATEGORY_OTHER,
     CATEGORY_SYSTEM,
 )
+from ..core.naming import normalize as _normalize_class
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -129,11 +130,19 @@ class Profile(object):
         self._scope_fields = data.get("scope_fields") or DEFAULT_SCOPE_FIELDS
         self._scope_domains = data.get("scope_domains") or {}
         self._scope_indirect = data.get("scope_indirect") or {}
-        self._lower_classes = dict((name.lower(), name) for name in self.classes)
+        # Indice por nombre normalizado: en una geodatabase corporativa la
+        # clase llega calificada y en mayusculas (``GYE.BARRA``), y el perfil
+        # tiene que reconocerla igual.
+        self._lower_classes = {}
+        for name in self.classes:
+            self._lower_classes.setdefault(name.lower(), name)
+            self._lower_classes.setdefault(_normalize_class(name), name)
 
     # ------------------------------------------------------------------
     def class_definition(self, class_name):
         key = self._lower_classes.get((class_name or "").lower())
+        if key is None:
+            key = self._lower_classes.get(_normalize_class(class_name))
         return self.classes.get(key) if key else None
 
     def knows(self, class_name):
@@ -198,8 +207,8 @@ class Profile(object):
         return definition.get("network_role") if definition else None
 
     def is_source_class(self, class_name):
-        lowered = (class_name or "").lower()
-        return any(name.lower() == lowered for name in self.source_classes)
+        key = _normalize_class(class_name)
+        return any(_normalize_class(name) == key for name in self.source_classes)
 
     def form_group_of(self, class_name, field_name):
         """Pestana del formulario donde cae el campo."""

@@ -8,8 +8,11 @@ integracion continua. El generador de la demostracion (``qfieldesri.demo``) lo
 usa para construir un fragmento del modelo electrico CNEL EP.
 """
 
+import copy
 import re
 
+from ..core.naming import find as find_class
+from ..core.naming import normalize as normalize_class
 from .base import GeodatabaseReader
 
 #: Solo se interpretan las formas que genera qfieldESRI: comparacion simple,
@@ -115,6 +118,10 @@ class MemoryReader(GeodatabaseReader):
         self.updated = []
         self.deleted = []
         self._editing = False
+        #: Historial de la sesion de edicion: ``("start", versionado)`` y
+        #: ``("stop", guardar)``. Sirve para comprobar en las pruebas que el
+        #: lote se abre y se cierra como toca.
+        self.editing_calls = []
 
     # -- ciclo de vida --------------------------------------------------
     def open(self):
@@ -124,9 +131,15 @@ class MemoryReader(GeodatabaseReader):
     def describe_workspace(self, layer_names=None):
         if not layer_names:
             return self.workspace_info
-        wanted = set(name.lower() for name in layer_names)
-        clone = self.workspace_info
-        clone.layers = [layer for layer in clone.layers if layer.name.lower() in wanted]
+        wanted = set(normalize_class(name) for name in layer_names)
+        # Copia superficial: filtrar no puede dejar mutilado el workspace
+        # original, del que dependen las llamadas siguientes.
+        clone = copy.copy(self.workspace_info)
+        clone.layers = [
+            layer
+            for layer in self.workspace_info.layers
+            if normalize_class(layer.name) in wanted
+        ]
         return clone
 
     # -- datos ----------------------------------------------------------
@@ -144,7 +157,7 @@ class MemoryReader(GeodatabaseReader):
         limit=0,
     ):
         count = 0
-        for wkb, attributes in self.data.get(layer_info.name, []):
+        for wkb, attributes in self._rows(layer_info):
             if not _matches(where_clause, attributes):
                 continue
             yield wkb, dict((name, attributes.get(name)) for name in field_names)
@@ -154,23 +167,28 @@ class MemoryReader(GeodatabaseReader):
 
     def count_features(self, layer_info, where_clause=None):
         return len(
-            [
-                row
-                for row in self.data.get(layer_info.name, [])
-                if _matches(where_clause, row[1])
-            ]
+            [row for row in self._rows(layer_info) if _matches(where_clause, row[1])]
         )
+
+    def _rows(self, layer_info):
+        """Datos de una clase, aceptando el nombre calificado o el corto."""
+        if layer_info.name in self.data:
+            return self.data[layer_info.name]
+        match = find_class(self.data, layer_info.name)
+        return self.data[match] if match is not None else []
 
     def union_wkt(self, layer_name, where_clause=None):
         """La demostracion no tiene motor geometrico: se declara sin soporte."""
         return None, None
 
     # -- escritura ------------------------------------------------------
-    def start_editing(self):
+    def start_editing(self, versioned=None):
         self._editing = True
+        self.editing_calls.append(("start", versioned))
 
     def stop_editing(self, save=True):
         self._editing = False
+        self.editing_calls.append(("stop", save))
 
     def update_feature(self, layer_info, key_field, key_value, attributes, wkb=None):
         self.updated.append((layer_info.name, key_field, key_value, attributes, wkb))

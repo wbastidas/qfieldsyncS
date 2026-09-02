@@ -112,7 +112,11 @@ def _list_layers(arcpy, path, result):
             "exactos, exporte las capas como .lyrx desde ArcGIS Pro."
         )
         if path.lower().endswith(".lyr"):
-            return list(arcpy.mapping.Layer(path)), False
+            # ``Layer`` devuelve **una** capa, no una lista; y si el archivo es
+            # una capa de grupo, las hijas solo aparecen a traves de
+            # ``ListLayers``.
+            return list(arcpy.mapping.ListLayers(arcpy.mapping.Layer(path))), False
+        # ``CURRENT`` es el documento abierto en ArcMap en este momento.
         document = arcpy.mapping.MapDocument(path)
         return list(arcpy.mapping.ListLayers(document)), False
 

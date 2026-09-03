@@ -103,6 +103,70 @@ Los valores elegibles (los 246 alimentadores, las 139 subestaciones…) se leen
 catálogo del modelo advierte que cambian en cada Unidad de Negocio. Además se
 puede pedir que solo se ofrezcan los que de verdad aparecen en los datos.
 
+## Qué se exporta: conjuntos temáticos
+
+El ámbito decide **qué trozo** de la red viaja. Esto decide otra cosa distinta
+y tan necesaria como aquella: **qué clases** viajan. Una brigada que sale a
+inventariar clientes no necesita las 47 clases del modelo — el paquete abre
+lento y la leyenda se llena de capas que nadie va a tocar.
+
+Las dos preguntas se combinan: *los transformadores **del** alimentador
+04BH070T11*.
+
+En la ventana es la pestaña **2 · Qué exportar**: se elige el trabajo en un
+desplegable, la lista de clases se marca sola y se afina a doble clic.
+
+| Conjunto | Qué lleva |
+|---|---|
+| `clientes` | Puntos de carga, conexión y atributos del consumidor |
+| `postes` | Estructuras de soporte con lo que llevan encima: estructuras montadas, instituciones, operadoras, tensores |
+| `alumbrado` | Luminarias y semáforos |
+| `transformadores` | Puestos de transformación de distribución y de potencia, con sus unidades |
+| `protecciones` | Seccionadores, fusibles, protección dinámica, reguladores, capacitores, pararrayos, puntos de apertura |
+| `red_mt` · `red_bt` · `subtransmision` | Los tramos de cada nivel de tensión con su maniobra |
+| `subestaciones` | Subestaciones, barras, transformadores de potencia, generación |
+| `red_electrica` | Toda la red, sin catálogos ni tablas auxiliares |
+| `todo` | La geodatabase completa (por omisión) |
+
+Además, salgan de donde salgan los datos, siempre se ofrecen los conjuntos que
+se deducen de la propia geodatabase: **solo puntos**, **solo líneas**, **solo
+polígonos**, **solo tablas**. Sirven para cualquier modelo, no solo el de CNEL.
+
+**Los conjuntos vacíos no se ofrecen.** Si la geodatabase no tiene luminarias,
+`alumbrado` no aparece: ofrecerlo solo generaría un paquete vacío.
+
+### Lo que cuelga de lo elegido
+
+Un poste pelado no sirve para revisarlo en campo: hacen falta las estructuras
+montadas, las instituciones y las operadoras que cuelgan de él. Por eso, al
+elegir una clase se arrastran las que dependen de ella siguiendo las
+*relationship classes* de la geodatabase — de forma transitiva, porque una
+tabla puede colgar de otra que a su vez cuelga de lo elegido.
+
+Se puede desactivar, y lo que se desmarca a mano **no vuelve por la puerta de
+atrás**: lo que se ve marcado es exactamente lo que se recibe.
+
+```bat
+REM ¿qué me puedo llevar?
+%PY% -m qfieldesri conjuntos --gdb C:\datos\GYE.gdb
+%PY% -m qfieldesri conjuntos --gdb C:\datos\GYE.gdb --conjunto postes
+
+REM solo clientes, del alimentador de siempre
+%PY% -m qfieldesri empaquetar --gdb C:\datos\GYE.gdb --salida C:\salida ^
+     --nombre clientes_04BH --conjunto clientes ^
+     --ambito alimentador --valores 04BH070T11
+
+REM postes y lo que llevan encima, menos el catálogo
+%PY% -m qfieldesri empaquetar --gdb C:\datos\GYE.gdb --salida C:\salida ^
+     --nombre postes --conjunto postes --sin-clases CATALOGOESTRUCTURA
+
+REM clases sueltas, sin arrastrar nada
+%PY% -m qfieldesri empaquetar --gdb C:\datos\GYE.gdb --salida C:\salida ^
+     --nombre solo_tramos --clases TramoDistribucionAereo --sin-relacionadas
+```
+
+Al terminar, el empaquetado dice qué entró, por qué, y qué se quedó fuera.
+
 ## Cómo se ve en el dispositivo: la simbología
 
 ArcGIS no guarda la simbología dentro de la geodatabase. Vive **fuera**: en el
@@ -248,7 +312,15 @@ programa inventaría clases, dominios, subtipos y relaciones, y avisa de lo que
 puede dar problemas (clases sin GlobalID, dominios que cambian según el
 subtipo, capas demasiado grandes…). **No modifica nada.**
 
-### 2 · Exportar a QField
+### 2 · Qué exportar
+
+Se elige el trabajo —clientes, postes, transformadores, la red completa…— y la
+lista de clases se marca sola. A doble clic se marca o desmarca cualquier
+clase, y la columna *Motivo* dice por qué entró cada una: si vino del conjunto,
+si se arrastró por relación o si se marcó a mano. Al pie, cuántas clases de
+cuántas se van a exportar.
+
+### 3 · Exportar a QField
 
 Se elige el ámbito, los valores, cómo se verá en el dispositivo (ver
 [simbología](#cómo-se-ve-en-el-dispositivo-la-simbología)), la carpeta de salida
@@ -265,7 +337,7 @@ mi_proyecto/
 Se copia la carpeta completa al dispositivo (cable, tarjeta o QFieldCloud) y se
 abre el proyecto desde QField.
 
-### 3 · Traer de campo
+### 4 · Traer de campo
 
 Se apunta a la carpeta que vuelve del dispositivo. **Comparar** enumera altas,
 modificaciones, bajas y conflictos sin tocar nada; **Aplicar** los escribe.
@@ -334,6 +406,36 @@ media tensión con subtipos, puesto de transformación con sus transformadores y
 la tabla de alimentador cabecera). Sirve para ver el resultado antes de conectar
 la geodatabase de producción.
 
+### El ciclo completo, en los dos orígenes
+
+```bash
+python tools/prueba_ida_y_vuelta.py
+```
+
+Ejecuta de punta a punta lo que se hace en producción —analizar, elegir qué se
+exporta, empaquetar, simular la jornada de campo (una modificación, un alta y
+una baja) y devolver lo capturado— **dos veces**: contra una File Geodatabase y
+contra una corporativa con los nombres calificados de Oracle
+(`SIGELEC.ESTRUCTURASOPORTE`). Al final compara los dos y dice si se
+comportaron igual:
+
+```
+                               File Geodatabase     Corporativa SIGELEC
+  Clases exportadas            2                    2
+  Entidades                    4                    4
+  Altas                        1                    1
+  Modificaciones               1                    1
+  Bajas                        1                    1
+  Escrituras (mod/alta/baja)   1/1/1                1/1/1
+  Errores                      0                    0
+
+  Los dos origenes se comportan igual y el ciclo cierra.
+```
+
+No hace falta ArcGIS ni Oracle: los dos orígenes son la misma geodatabase en
+memoria con los nombres que le pondría cada uno, así que lo que se comprueba es
+el programa, no el motor de ESRI.
+
 ## Geodatabase corporativa: Oracle 11gR2 con ArcSDE
 
 Todo lo anterior funciona igual pasando la conexión `.sde` en vez de la `.gdb`.
@@ -343,18 +445,18 @@ y la misma vuelta**, contra una File Geodatabase o contra la corporativa.
 ### Lo que Oracle cambia: cómo se llaman las clases
 
 En una File Geodatabase la clase es `EstructuraSoporte`. La misma clase en
-Oracle con ArcSDE llega como **`GYE.ESTRUCTURASOPORTE`**: en mayúsculas, porque
+Oracle con ArcSDE llega como **`SIGELEC.ESTRUCTURASOPORTE`**: en mayúsculas, porque
 así la guarda Oracle, y calificada con el usuario propietario del esquema. Con
 otra conexión, la misma clase llega como `SDE.ESTRUCTURASOPORTE`.
 
 Eso no cambia la clase, cambia la etiqueta. qfieldESRI compara **clases**, no
 cadenas, así que:
 
-- el perfil del modelo reconoce `GYE.BARRA` igual que `Barra`;
+- el perfil del modelo reconoce `SIGELEC.BARRA` igual que `Barra`;
 - en la configuración, en `--solo` y en el archivo de estilo se escribe el
   nombre corto (`Barra`) aunque el servidor la llame de otro modo;
 - las tablas del GeoPackage pierden el esquema: en el dispositivo se ve
-  `ESTRUCTURASOPORTE`, no `GYE.ESTRUCTURASOPORTE`;
+  `ESTRUCTURASOPORTE`, no `SIGELEC.ESTRUCTURASOPORTE`;
 - **un paquete generado con una conexión se puede sincronizar con otra**, que
   es lo normal cuando se empaqueta en campo y se aplica desde la oficina.
 
@@ -413,8 +515,8 @@ qfieldesri/
 ├── launcher.py localiza el Python de ArcGIS y arranca la aplicación
 ├── cli.py      línea de comandos
 ├── core/       metadatos, nombres de clase, configuración, ámbito,
-│               empaquetado, verificación, sincronización, adjuntos,
-│               QFieldCloud
+│               selección de clases, empaquetado, verificación,
+│               sincronización, adjuntos, QFieldCloud
 ├── readers/    arcpy (File GDB y SDE), OGR, memoria
 ├── writers/    GeoPackage y archivo de proyecto de QField
 ├── symbology/  modelo neutro de símbolos, lector de .lyrx (CIM), lector de
@@ -424,8 +526,8 @@ qfieldesri/
 ├── utils/      WKB, huellas de entidad, funciones ST_* para SQLite
 └── demo.py     geodatabase de ejemplo en memoria, local y corporativa
 docs/modelo/    catálogo del modelo eléctrico CNEL EP (origen del perfil)
-tools/          generador del perfil desde el catálogo
-tests/          316 pruebas que corren sin ArcGIS
+tools/          generador del perfil y prueba de humo de ida y vuelta
+tests/          352 pruebas que corren sin ArcGIS
 ```
 
 `arcpy` solo se importa en su lector, en el lanzador, en la caja de
@@ -440,7 +542,7 @@ cd qfieldesri
 python -m unittest discover -s tests -t .
 ```
 
-316 pruebas, sin ArcGIS ni ningún otro software instalado. Cubren el contenedor
+352 pruebas, sin ArcGIS ni ningún otro software instalado. Cubren el contenedor
 GeoPackage, la normalización de WKB, el archivo de proyecto, el perfil, el
 ámbito de exportación, la simbología (lectura de CIM, archivo de estilo,
 precedencia entre fuentes y serialización), el empaquetado completo, los

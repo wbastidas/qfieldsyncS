@@ -143,11 +143,22 @@ def _layer_name(layer):
 
     En el mapa la capa puede llamarse "Postes de hormigon" y venir de la clase
     ``EstructuraSoporte``; lo que hay que casar es el nombre de la clase.
+
+    Se conserva la calificacion cuando la hay (``SIGELEC.TRAMOMT``): identifica
+    mejor la clase, y quien busca despues sabe comparar con el nombre corto. La
+    ruta se parte a mano porque ``os.path.basename`` no reconoce la barra
+    invertida cuando el programa no corre en Windows, y una ruta de ArcGIS
+    siempre la lleva.
     """
     source = getattr(layer, "dataSource", None) or ""
     if source:
-        return os.path.basename(source).split(".")[-1]
+        return _last_segment(source)
     return getattr(layer, "name", "") or ""
+
+
+def _last_segment(path):
+    """Ultimo tramo de una ruta, con cualquiera de las dos barras."""
+    return path.replace("\\", "/").rstrip("/").split("/")[-1]
 
 
 def _read_from_cim(layer, result):

@@ -799,7 +799,7 @@ class ResolverTest(unittest.TestCase):
             ).style_for("X", "Point")
         }
         resolver = SymbologyResolver(imported=imported)
-        style = resolver.style_for("GYE.SDE.EstructuraSoporte", "Point")
+        style = resolver.style_for("SIGELEC.SDE.EstructuraSoporte", "Point")
         self.assertEqual(
             style.renderer.symbol.layers[0].get("color").to_hex(), "#010203"
         )

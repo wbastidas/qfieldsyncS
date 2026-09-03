@@ -310,7 +310,7 @@ class CheckerTest(unittest.TestCase):
         from qfieldesri.core.model import LayerInfo
 
         self.workspace.layers.append(
-            LayerInfo(name="SDE.GYE.EstructuraSoporte", geometry_type="Point")
+            LayerInfo(name="SDE.SIGELEC.EstructuraSoporte", geometry_type="Point")
         )
         result = WorkspaceChecker(self.workspace, self.config).check()
         self.assertIn("colision_nombres", self._checks(result))

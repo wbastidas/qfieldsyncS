@@ -429,8 +429,9 @@ def build_reader():
 # ----------------------------------------------------------------------
 #: Propietario del esquema con el que Oracle califica las clases. En una
 #: geodatabase corporativa la conexion determina como se llama cada clase:
-#: ``GYE.POSTE`` con un usuario, ``SDE.POSTE`` con otro.
-DEFAULT_OWNER = "GYE"
+#: ``SIGELEC.POSTE`` con un usuario, ``SDE.POSTE`` con otro. Es un ejemplo,
+#: no una constante del programa: el propietario se lee de la geodatabase.
+DEFAULT_OWNER = "SIGELEC"
 
 
 def qualify(name, owner=DEFAULT_OWNER):
@@ -469,7 +470,7 @@ def build_enterprise_reader(owner=DEFAULT_OWNER, versioned=True):
             relationship.destination, relationship.destination
         )
 
-    workspace.path = "Database Connections/GYE_PRODUCCION.sde"
+    workspace.path = "Database Connections/SIGELEC_PRODUCCION.sde"
     workspace.workspace_type = WorkspaceInfo.ENTERPRISE
     workspace.is_versioned = versioned
     for layer in workspace.layers:

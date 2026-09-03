@@ -42,6 +42,7 @@ from .model import (
 )
 from .naming import normalize as normalize_class
 from .scope import LayerFilter, ScopeResolver, combine
+from .selection import SelectionResolver
 
 MANIFEST_NAME = "qfieldesri_manifest.json"
 MANIFEST_VERSION = 1
@@ -92,6 +93,8 @@ class PackagingResult(object):
         self.scope_description = ""
         #: de donde salio la simbologia de cada capa
         self.symbology_description = ""
+        #: explicacion de que clases se eligieron y por que
+        self.selection_description = ""
 
     @property
     def total_features(self):
@@ -117,6 +120,8 @@ class Packager(object):
         self.workspace = None
         #: plan de ambito resuelto (que filtro le toca a cada clase)
         self.scope_plan = None
+        #: plan de seleccion resuelto (que clases viajan)
+        self.selection_plan = None
         #: resolutor de simbologia (estilo del usuario, ArcGIS, perfil, auto)
         self.symbology = None
         self._catalog_tables = {}
@@ -183,6 +188,8 @@ class Packager(object):
         project.write(project_path)
         self._write_attachment_dirs(project_dir)
         self._write_manifest(project_dir, manifest)
+        if self.selection_plan is not None and not self.selection_plan.is_empty:
+            result.selection_description = self.selection_plan.describe()
         if self.scope_plan is not None and not self.scope_plan.is_empty:
             result.scope_description = self.scope_plan.describe()
         if self.symbology is not None:
@@ -198,6 +205,8 @@ class Packager(object):
     # ------------------------------------------------------------------
     def _select_layers(self):
         """Capas a empaquetar, en el orden en que se dibujaran."""
+        self._resolve_selection()
+
         selected = []
         for layer_info in self.workspace.layers:
             # Una clase sin configuracion propia se incluye con los valores
@@ -206,13 +215,20 @@ class Packager(object):
             config = self.config.layer_config(layer_info.name)
             if not config.is_included:
                 continue
+            if self.selection_plan is not None and not self.selection_plan.keeps(
+                layer_info.name
+            ):
+                continue
             if layer_info.dataset_type != layer_info.FEATURE_CLASS and not (
                 self.config.include_related_tables
             ):
                 continue
             selected.append(layer_info)
 
-        if self.config.include_related_tables:
+        if self.config.include_related_tables and self.selection_plan is None:
+            # Con una seleccion explicita, lo relacionado ya se arrastro al
+            # resolverla: volver a hacerlo aqui reintroduciria justo las clases
+            # que el usuario acaba de quitar.
             selected = self._add_related_tables(selected)
 
         # Poligonos primero, luego lineas y puntos encima: es el orden util en
@@ -225,6 +241,16 @@ class Packager(object):
             )
         )
         return selected
+
+    def _resolve_selection(self):
+        """Traduce "que quiero exportar" en la lista concreta de clases."""
+        if self.config.selection.is_empty:
+            self.selection_plan = None
+            return
+        resolver = SelectionResolver(self.workspace, self.profile)
+        self.selection_plan = resolver.resolve(self.config.selection)
+        for note in self.selection_plan.notes:
+            self.progress("Seleccion: %s" % note)
 
     def _apply_scope(self, layers):
         """Resuelve el ambito y ordena las clases para poder aplicarlo.

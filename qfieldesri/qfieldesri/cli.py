@@ -33,6 +33,7 @@ from .core.checker import WorkspaceChecker
 from .core.config import LayerAction, PackagingConfig
 from .core.packager import Packager, load_manifest
 from .core.scope import Scope, ScopeKind, ScopeResolver
+from .core.selection import Selection, SelectionResolver
 from .core.synchronizer import ConflictPolicy, Synchronizer
 from .profiles import available_profiles, load_profile
 from .readers import get_reader
@@ -162,6 +163,51 @@ def cmd_ambitos(args):
         reader.close()
 
 
+def cmd_conjuntos(args):
+    """Lista los conjuntos tematicos que se pueden exportar.
+
+    Responde a la pregunta previa a cualquier exportacion: "¿que puedo
+    llevarme?". Los conjuntos del perfil son conocimiento del modelo; los de
+    geometria salen de la propia geodatabase y valen para cualquiera.
+    """
+    reader = _open_reader(args.gdb, args.motor)
+    try:
+        workspace = reader.describe_workspace()
+        resolver = SelectionResolver(workspace, load_profile(args.perfil))
+        sets = resolver.available_sets()
+
+        if args.conjunto:
+            chosen = resolver.set_by_id(args.conjunto)
+            if chosen is None:
+                _out(
+                    "No existe el conjunto '%s'. Disponibles: %s"
+                    % (args.conjunto, ", ".join(item.id for item in sets))
+                )
+                return EXIT_ERROR
+            _out("%s (%d clases)" % (chosen.name, len(chosen)))
+            if chosen.description:
+                _out("  %s" % chosen.description)
+            for name in sorted(chosen.classes):
+                _out("  %s" % name)
+            return EXIT_OK
+
+        _out("Conjuntos disponibles en %s:" % workspace.path)
+        _out("")
+        for item in sets:
+            _out(
+                "  %-16s %-34s %3d clases  (%s)"
+                % (item.id, item.name, len(item), item.source)
+            )
+        _out("")
+        _out(
+            "Use '--conjunto <id>' para ver sus clases, o pase "
+            "'--conjunto' a 'empaquetar' para exportar solo ese."
+        )
+        return EXIT_OK
+    finally:
+        reader.close()
+
+
 def cmd_estilo(args):
     """Exporta la simbologia como archivo de estilo editable.
 
@@ -264,6 +310,9 @@ def cmd_empaquetar(args):
 
         result = Packager(reader, config, progress=_progress).run()
         _out("")
+        if result.selection_description:
+            _out(result.selection_description)
+            _out("")
         if result.scope_description:
             _out(result.scope_description)
             _out("")
@@ -400,6 +449,16 @@ def _scope_from_args(args):
     )
 
 
+def _selection_from_args(args):
+    """Que clases se exportan, segun lo pedido en la linea de comandos."""
+    return Selection(
+        sets=getattr(args, "conjunto", None) or [],
+        classes=getattr(args, "clases", None) or [],
+        exclude=getattr(args, "sin_clases", None) or [],
+        include_related=not getattr(args, "sin_relacionadas", False),
+    )
+
+
 def _config_from_args(args, workspace=None):
     config = PackagingConfig(
         workspace=getattr(args, "gdb", None) or "",
@@ -412,6 +471,7 @@ def _config_from_args(args, workspace=None):
         include_related_tables=not getattr(args, "sin_tablas_relacionadas", False),
         big_domain_threshold=getattr(args, "umbral_dominio", 40),
         scope=_scope_from_args(args),
+        selection=_selection_from_args(args),
         symbology_source=getattr(args, "simbologia", None),
         style_file=getattr(args, "estilo", None),
     )
@@ -513,6 +573,16 @@ def build_parser():  # noqa: PLR0915
     )
     ambitos.set_defaults(func=cmd_ambitos)
 
+    conjuntos = subparsers.add_parser(
+        "conjuntos",
+        help="Lista los conjuntos tematicos que se pueden exportar",
+    )
+    _add_common(conjuntos, with_output=False)
+    conjuntos.add_argument(
+        "--conjunto", help="Ver las clases de ese conjunto en vez de la lista"
+    )
+    conjuntos.set_defaults(func=cmd_conjuntos)
+
     estilo = subparsers.add_parser(
         "estilo",
         help="Exporta la simbologia como archivo de estilo editable",
@@ -586,6 +656,28 @@ def build_parser():  # noqa: PLR0915
     empaquetar.add_argument(
         "--area",
         help="Area de interes en WKT (equivale a --ambito poligono --poligono-wkt)",
+    )
+    empaquetar.add_argument(
+        "--conjunto",
+        nargs="+",
+        help="Conjuntos tematicos a exportar (vea el subcomando 'conjuntos')",
+    )
+    empaquetar.add_argument(
+        "--clases",
+        nargs="+",
+        help="Clases sueltas que se anaden a lo elegido",
+    )
+    empaquetar.add_argument(
+        "--sin-clases",
+        nargs="+",
+        dest="sin_clases",
+        help="Clases que se quitan aunque vengan en un conjunto",
+    )
+    empaquetar.add_argument(
+        "--sin-relacionadas",
+        action="store_true",
+        dest="sin_relacionadas",
+        help="No arrastrar las clases que dependen de las elegidas",
     )
     empaquetar.add_argument(
         "--simbologia",

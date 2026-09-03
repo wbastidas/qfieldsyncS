@@ -1,4 +1,138 @@
 {
+ "class_sets": [
+  {
+   "classes": [
+    "PuntoCarga",
+    "CONEXIONCONSUMIDOR",
+    "ATRIBUTOSCONSUMIDOR"
+   ],
+   "description": "Puntos de carga y lo que se registra de cada consumidor.",
+   "id": "clientes",
+   "name": "Clientes y consumo"
+  },
+  {
+   "classes": [
+    "EstructuraSoporte",
+    "EstructuraANivel",
+    "ESTRUCTURAENPOSTE",
+    "INSTITUCIONENPOSTE",
+    "OPERADORAENPOSTE",
+    "Tensor",
+    "CATALOGOESTRUCTURA"
+   ],
+   "description": "Estructuras de soporte con sus estructuras montadas, instituciones, operadoras y tensores.",
+   "id": "postes",
+   "name": "Postes y lo que llevan encima"
+  },
+  {
+   "classes": [
+    "Luminaria",
+    "UNIDADLUMINARIA",
+    "Semaforo"
+   ],
+   "description": "Luminarias y semaforos.",
+   "id": "alumbrado",
+   "name": "Alumbrado publico"
+  },
+  {
+   "classes": [
+    "PuestoTransfDistribucion",
+    "UNIDADTRANSFDISTRIBUCION",
+    "PuestoTransfPotencia",
+    "UNIDADTRANSFPOTENCIA"
+   ],
+   "description": "Puestos de transformacion de distribucion y de potencia.",
+   "id": "transformadores",
+   "name": "Transformadores"
+  },
+  {
+   "classes": [
+    "PuestoSeccionador",
+    "PuestoSeccionadorFusible",
+    "PuestoProteccionDinamico",
+    "PuestoProteccionBajaTension",
+    "PuestoReguladorTension",
+    "PuestoCorrectorFactorPotencia",
+    "Pararrayos",
+    "PuntoApertura"
+   ],
+   "description": "Seccionadores, fusibles, proteccion dinamica, reguladores, capacitores, pararrayos y puntos de apertura.",
+   "id": "protecciones",
+   "name": "Protecciones y maniobra"
+  },
+  {
+   "classes": [
+    "TramoDistribucionAereo",
+    "TramoDistribucionSubterraneo",
+    "PuntoApertura",
+    "PuestoSeccionador",
+    "PuestoSeccionadorFusible",
+    "PuestoProteccionDinamico"
+   ],
+   "description": "Tramos de distribucion, aereos y subterraneos, y su maniobra.",
+   "id": "red_mt",
+   "name": "Red de media tension"
+  },
+  {
+   "classes": [
+    "TramoBajaTensionAereo",
+    "TramoBajaTensionSubterraneo",
+    "PuestoProteccionBajaTension",
+    "PuntoCarga"
+   ],
+   "description": "Tramos de baja tension, su proteccion y los puntos de carga.",
+   "id": "red_bt",
+   "name": "Red de baja tension"
+  },
+  {
+   "classes": [
+    "TramoSubtransmisionAereo",
+    "TramoSubtransmisionSubterraneo"
+   ],
+   "id": "subtransmision",
+   "name": "Subtransmision"
+  },
+  {
+   "classes": [
+    "Subestacion",
+    "Barra",
+    "PuestoTransfPotencia",
+    "CIRCUITOFUENTE",
+    "Generador",
+    "GeneradorDistribuido",
+    "MOTORSINCRONO",
+    "MOTORINDUCCION"
+   ],
+   "description": "Subestaciones, barras, transformadores de potencia y generadores.",
+   "id": "subestaciones",
+   "name": "Subestaciones y generacion"
+  },
+  {
+   "classes": [
+    "TramoSubtransmisionAereo",
+    "TramoSubtransmisionSubterraneo",
+    "TramoDistribucionAereo",
+    "TramoDistribucionSubterraneo",
+    "TramoBajaTensionAereo",
+    "TramoBajaTensionSubterraneo",
+    "Barra",
+    "EstructuraSoporte",
+    "PuestoTransfDistribucion",
+    "PuestoTransfPotencia",
+    "PuestoSeccionador",
+    "PuestoSeccionadorFusible",
+    "PuestoProteccionDinamico",
+    "PuestoProteccionBajaTension",
+    "PuestoReguladorTension",
+    "PuestoCorrectorFactorPotencia",
+    "PuntoApertura",
+    "Subestacion"
+   ],
+   "description": "Los tramos de todos los niveles de tension con sus puestos, sin catalogos ni tablas auxiliares.",
+   "id": "red_electrica",
+   "name": "Toda la red electrica"
+  }
+ ],
  "classes": {
   "ATRIBUTOSCONSUMIDOR": {
    "alias": "ATRIBUTOSCONSUMIDOR",

@@ -2,7 +2,7 @@
 """Como se llama una clase, segun quien la mire.
 
 Una File Geodatabase devuelve ``Barra``. La misma clase en una geodatabase
-corporativa de Oracle con ArcSDE llega como ``GYE.BARRA``: calificada con el
+corporativa de Oracle con ArcSDE llega como ``SIGELEC.BARRA``: calificada con el
 usuario propietario y en mayusculas, porque asi la guarda Oracle. Y si manana
 se conecta otro usuario, la misma clase llega como ``SDE.BARRA``.
 
@@ -25,7 +25,7 @@ QUALIFIER = "."
 def short_name(name):
     """Nombre de la clase sin el esquema ni la base.
 
-    ``GYE.BARRA`` -> ``BARRA``; ``sde.DBO.Barra`` -> ``Barra``; ``Barra``
+    ``SIGELEC.BARRA`` -> ``BARRA``; ``sde.DBO.Barra`` -> ``Barra``; ``Barra``
     se queda como esta.
     """
     if not name:
@@ -51,7 +51,7 @@ def find(names, wanted):
     """Devuelve el nombre de ``names`` que designa la misma clase que ``wanted``.
 
     Primero busca la coincidencia exacta —si la geodatabase tiene ``BARRA`` y
-    ``GYE.BARRA``, hay que quedarse con la que se pidio— y solo despues afloja
+    ``SIGELEC.BARRA``, hay que quedarse con la que se pidio— y solo despues afloja
     la comparacion.
     """
     if not wanted:

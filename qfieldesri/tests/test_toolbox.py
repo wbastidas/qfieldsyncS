@@ -239,6 +239,34 @@ class ToolboxTest(unittest.TestCase):
         tool.updateMessages(list(by_name.values()))
         self.assertTrue(by_name["scope_polygon"].messages)
 
+    # -- que se exporta --------------------------------------------------
+    def test_el_conjunto_tematico_esta_en_el_dialogo(self):
+        parameters = self.toolbox.EmpaquetarParaQField().getParameterInfo()
+        by_name = dict((p.name, p) for p in parameters)
+        self.assertIn("class_set", by_name)
+        self.assertIn("follow_related", by_name)
+        self.assertEqual(by_name["class_set"].category, "Clases y campos")
+        self.assertIn(self.toolbox.SET_EVERYTHING, by_name["class_set"].filter.list)
+        self.assertTrue(by_name["follow_related"].value)
+
+    def test_sin_conjunto_elegido_la_seleccion_queda_vacia(self):
+        """Vacia significa "todo", que es lo que espera quien no toca nada."""
+        tool, by_name = self._packaging_parameters()
+        selection = tool._selection(by_name)
+        self.assertEqual(selection.sets, [])
+        self.assertEqual(selection.classes, [])
+        self.assertTrue(selection.is_empty)
+
+    def test_las_clases_marcadas_llegan_a_la_seleccion(self):
+        tool, by_name = self._packaging_parameters(
+            layers=["EstructuraSoporte", "TramoDistribucionAereo"]
+        )
+        selection = tool._selection(by_name)
+        self.assertEqual(
+            selection.classes, ["EstructuraSoporte", "TramoDistribucionAereo"]
+        )
+        self.assertFalse(selection.is_empty)
+
     # -- simbologia -----------------------------------------------------
     def test_la_simbologia_esta_en_su_propia_categoria(self):
         parameters = self.toolbox.EmpaquetarParaQField().getParameterInfo()

@@ -5,7 +5,7 @@ Lo que distingue a una geodatabase corporativa de una File Geodatabase, desde
 el punto de vista de qfieldESRI, no es el motor: es **como se llaman las
 clases**. Oracle las guarda en mayusculas y ArcSDE las califica con el usuario
 propietario, asi que la clase que en la ``.gdb`` es ``EstructuraSoporte``
-llega como ``GYE.ESTRUCTURASOPORTE``. Y con otra conexion, como
+llega como ``SIGELEC.ESTRUCTURASOPORTE``. Y con otra conexion, como
 ``SDE.ESTRUCTURASOPORTE``.
 
 Si esa etiqueta se tratara como identidad, contra una base corporativa
@@ -17,6 +17,7 @@ Estas pruebas ejercen el camino completo con el mismo modelo de siempre, pero
 nombrado como lo nombraria Oracle.
 """
 
+import io
 import os
 import shutil
 import tempfile
@@ -29,33 +30,35 @@ from qfieldesri.core.naming import find, normalize, same_class, short_name
 from qfieldesri.core.packager import Packager
 from qfieldesri.core.scope import Scope, ScopeKind, ScopeResolver
 from qfieldesri.core.synchronizer import Change, SyncError, Synchronizer
-from qfieldesri.demo import build_enterprise_reader, qualify
+from qfieldesri.demo import build_enterprise_reader, build_reader, qualify
 from qfieldesri.profiles import load_profile
 from qfieldesri.utils.sqlite_gpkg import connect
+
+HERE_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
 class NamingTest(unittest.TestCase):
     def test_nombre_corto(self):
-        self.assertEqual(short_name("GYE.BARRA"), "BARRA")
+        self.assertEqual(short_name("SIGELEC.BARRA"), "BARRA")
         self.assertEqual(short_name("sde.DBO.Barra"), "Barra")
         self.assertEqual(short_name("Barra"), "Barra")
         self.assertEqual(short_name(None), "")
 
     def test_la_misma_clase_con_otra_etiqueta(self):
-        self.assertTrue(same_class("GYE.BARRA", "Barra"))
-        self.assertTrue(same_class("GYE.BARRA", "SDE.Barra"))
-        self.assertFalse(same_class("GYE.BARRA", "GYE.POSTE"))
+        self.assertTrue(same_class("SIGELEC.BARRA", "Barra"))
+        self.assertTrue(same_class("SIGELEC.BARRA", "SDE.Barra"))
+        self.assertFalse(same_class("SIGELEC.BARRA", "SIGELEC.POSTE"))
         self.assertFalse(same_class("", "Barra"))
 
     def test_la_coincidencia_exacta_manda(self):
         """Con dos esquemas cargados hay que respetar el que se pidio."""
-        names = ["GYE.BARRA", "SDE.BARRA"]
+        names = ["SIGELEC.BARRA", "SDE.BARRA"]
         self.assertEqual(find(names, "SDE.BARRA"), "SDE.BARRA")
-        self.assertEqual(find(names, "Barra"), "GYE.BARRA")
+        self.assertEqual(find(names, "Barra"), "SIGELEC.BARRA")
         self.assertIsNone(find(names, "Poste"))
 
     def test_normalizacion(self):
-        self.assertEqual(normalize("GYE.BARRA"), "barra")
+        self.assertEqual(normalize("SIGELEC.BARRA"), "barra")
 
 
 class EnterpriseWorkspaceTest(unittest.TestCase):
@@ -72,7 +75,11 @@ class EnterpriseWorkspaceTest(unittest.TestCase):
             self.assertEqual(layer.name, layer.name.upper())
 
     def test_se_encuentra_la_capa_con_cualquiera_de_los_dos_nombres(self):
-        for name in ("EstructuraSoporte", "GYE.ESTRUCTURASOPORTE", "estructurasoporte"):
+        for name in (
+            "EstructuraSoporte",
+            "SIGELEC.ESTRUCTURASOPORTE",
+            "estructurasoporte",
+        ):
             layer = self.workspace.layer(name)
             self.assertIsNotNone(layer, name)
             self.assertEqual(layer.name, qualify("EstructuraSoporte"))
@@ -152,7 +159,7 @@ class EnterprisePackagingTest(unittest.TestCase):
             ]
         finally:
             connection.close()
-        # En el dispositivo nadie quiere ver 'GYE.ESTRUCTURASOPORTE'.
+        # En el dispositivo nadie quiere ver 'SIGELEC.ESTRUCTURASOPORTE'.
         self.assertIn("ESTRUCTURASOPORTE", tables)
         for table in tables:
             self.assertNotIn(".", table)
@@ -163,7 +170,7 @@ class EnterprisePackagingTest(unittest.TestCase):
         self.assertIn(qualify("EstructuraSoporte"), classes)
 
     def test_la_configuracion_admite_el_nombre_corto(self):
-        """El usuario escribe 'EstructuraSoporte', no 'GYE.ESTRUCTURASOPORTE'."""
+        """El usuario escribe 'EstructuraSoporte', no 'SIGELEC.ESTRUCTURASOPORTE'."""
         self.config.layer_config("EstructuraSoporte").action = LayerAction.READ_ONLY
         result = Packager(self.reader, self.config).run()
         entry = next(
@@ -258,7 +265,7 @@ class EnterpriseSyncTest(unittest.TestCase):
         self.assertEqual(self.reader.inserted[0][0], qualify("EstructuraSoporte"))
 
     def test_sincroniza_aunque_cambie_el_propietario_del_esquema(self):
-        """El paquete se genero con GYE y se sincroniza conectado como SDE.
+        """El paquete se genero con SIGELEC y se sincroniza conectado como SDE.
 
         Es un caso real: se empaqueta desde el equipo de campo con una conexion
         y se aplica desde la oficina con otra. La clase es la misma.
@@ -355,6 +362,44 @@ class EnterpriseSyncTest(unittest.TestCase):
         self.assertTrue(
             any("no se aplico ningun cambio" in error for error in report.errors)
         )
+
+
+class SmokeTest(unittest.TestCase):
+    """El guion de ``tools/prueba_ida_y_vuelta.py``, como prueba.
+
+    Comprueba lo que el usuario quiere saber antes de conectar produccion: que
+    el ciclo entero cierra igual contra una File Geodatabase y contra la
+    corporativa, sin que el nombre del esquema cambie ni un resultado.
+    """
+
+    def test_los_dos_origenes_dan_el_mismo_resultado(self):
+        import sys
+
+        sys.path.insert(0, os.path.dirname(HERE_ROOT))
+        from tools.prueba_ida_y_vuelta import run
+
+        directory = tempfile.mkdtemp()
+        stdout = sys.stdout
+        try:
+            # El guion esta hecho para leerse en pantalla; aqui solo interesa
+            # lo que devuelve.
+            with io.open(os.devnull, "w") as devnull:
+                sys.stdout = devnull
+                local = run(build_reader(), os.path.join(directory, "local"), "local")
+                corporate = run(
+                    build_enterprise_reader(),
+                    os.path.join(directory, "sde"),
+                    "corporativa",
+                )
+        finally:
+            sys.stdout = stdout
+            shutil.rmtree(directory, ignore_errors=True)
+
+        self.assertEqual(local["entidades"], corporate["entidades"])
+        self.assertEqual(local["escrituras"], corporate["escrituras"])
+        self.assertEqual(local["escrituras"], (1, 1, 1))
+        self.assertEqual(local["errores"], [])
+        self.assertEqual(corporate["errores"], [])
 
 
 class WorkspaceTypeTest(unittest.TestCase):

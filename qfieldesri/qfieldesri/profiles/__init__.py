@@ -126,12 +126,14 @@ class Profile(object):
         self.sink_classes = data.get("sink_classes", [])
         self.variable_domains = data.get("variable_domains", [])
         self.classes = data.get("classes", {})
+        #: Conjuntos tematicos: que clases se lleva cada tipo de trabajo.
+        self._class_sets = data.get("class_sets", [])
         self.relationships = data.get("relationships", [])
         self._scope_fields = data.get("scope_fields") or DEFAULT_SCOPE_FIELDS
         self._scope_domains = data.get("scope_domains") or {}
         self._scope_indirect = data.get("scope_indirect") or {}
         # Indice por nombre normalizado: en una geodatabase corporativa la
-        # clase llega calificada y en mayusculas (``GYE.BARRA``), y el perfil
+        # clase llega calificada y en mayusculas (``SIGELEC.BARRA``), y el perfil
         # tiene que reconocerla igual.
         self._lower_classes = {}
         for name in self.classes:
@@ -231,6 +233,15 @@ class Profile(object):
             (int(code), entry.get("name", code))
             for code, entry in definition.get("subtypes", {}).items()
         )
+
+    def class_sets(self):
+        """Conjuntos tematicos declarados por el perfil.
+
+        Saber que ``CONEXIONCONSUMIDOR`` es cosa de clientes y no de la red es
+        conocimiento del modelo, no de la geodatabase: por eso vive aqui y no
+        se deduce en caliente.
+        """
+        return list(self._class_sets)
 
     def documented_relationships(self):
         return self.relationships

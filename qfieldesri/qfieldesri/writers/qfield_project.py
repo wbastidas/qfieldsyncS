@@ -99,6 +99,26 @@ def _option_value(parent, value, name=None):
         ET.SubElement(parent, "Option", attributes)
 
 
+def _write_symbol_layer_properties(parent, options):
+    """Escribe las propiedades de una capa de simbolo en las **dos** formas.
+
+    Al leer un simbolo, QGIS busca primero un ``<Option type="Map">``; si no lo
+    encuentra, cae a la forma antigua ``<prop k="..." v="..."/>``. La version
+    moderna es la primera, pero la que llevan los QField mas antiguos —los que
+    siguen instalados en muchos telefonos de campo— solo entiende la segunda, y
+    cuando no entiende las propiedades no falla: dibuja la capa con los valores
+    por defecto, o sea, en gris.
+
+    Escribir las dos cuesta unos kilobytes y evita esa clase entera de "llego
+    en gris al dispositivo": la version nueva ignora los ``prop`` y la antigua
+    ignora el ``Option``.
+    """
+    _option_value(parent, options)
+    for key in options:
+        ET.SubElement(parent, "prop", {"k": key, "v": _text(options[key])})
+    return parent
+
+
 def _option_map(parent, tag, mapping):
     element = ET.SubElement(parent, tag)
     _option_value(element, mapping)
@@ -914,7 +934,7 @@ class QFieldProjectWriter(object):
             "layer",
             {"class": layer_class, "enabled": "1", "locked": "0", "pass": "0"},
         )
-        _option_value(element, options)
+        _write_symbol_layer_properties(element, options)
 
         if symbol_layer.kind == SymbolLayer.MARKER_LINE:
             # El marcador que se repite va anidado dentro de la capa, con el

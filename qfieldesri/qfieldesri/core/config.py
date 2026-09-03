@@ -17,6 +17,7 @@ from .model import (
 )
 from .naming import find as _find_class
 from .scope import Scope
+from .selection import Selection
 
 
 class LayerAction(object):
@@ -158,6 +159,7 @@ class PackagingConfig(object):
         spatial_index=True,
         connection_note="",
         scope=None,
+        selection=None,
         symbology_source=None,
         style_file=None,
     ):
@@ -195,6 +197,13 @@ class PackagingConfig(object):
         #: ambito de exportacion (alimentador, subestacion, poligono...).
         #: Es lo que decide que subconjunto de la red viaja al dispositivo.
         self.scope = scope if isinstance(scope, Scope) else Scope.from_dict(scope)
+        #: que clases viajan (conjuntos tematicos y marcado por clase). El
+        #: ambito decide que trozo de la red; esto, que capas de ella.
+        self.selection = (
+            selection
+            if isinstance(selection, Selection)
+            else Selection.from_dict(selection)
+        )
         #: carpeta de archivos .lyrx, o un .lyrx/.lyr/.mxd del que importar la
         #: simbologia de ArcGIS
         self.symbology_source = symbology_source
@@ -258,6 +267,7 @@ class PackagingConfig(object):
             "spatial_index": self.spatial_index,
             "connection_note": self.connection_note,
             "scope": self.scope.to_dict(),
+            "selection": self.selection.to_dict(),
             "symbology_source": self.symbology_source,
             "style_file": self.style_file,
         }

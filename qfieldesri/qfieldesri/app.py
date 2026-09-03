@@ -43,6 +43,7 @@ from .core.checker import WorkspaceChecker
 from .core.config import PackagingConfig
 from .core.packager import Packager, build_stylesheet, load_manifest
 from .core.scope import Scope, ScopeKind, ScopeResolver
+from .core.selection import Selection, SelectionResolver
 from .core.synchronizer import ConflictPolicy, Synchronizer
 from .profiles import available_profiles, load_profile
 from .readers import get_reader
@@ -64,6 +65,20 @@ SYMBOLOGY_AUTO = "Automatica (la decide qfieldESRI)"
 SYMBOLOGY_FOLDER = "Carpeta de archivos de capa (.lyrx)"
 SYMBOLOGY_DOCUMENT = "Documento de ArcGIS (.lyrx, .lyr, .mxd, .aprx)"
 SYMBOLOGY_MODES = (SYMBOLOGY_AUTO, SYMBOLOGY_FOLDER, SYMBOLOGY_DOCUMENT)
+
+#: Identificador y rotulo del conjunto que lo lleva todo.
+SET_ALL_ID = "todo"
+SET_EVERYTHING = "Toda la geodatabase"
+
+#: Marca visible de la lista de clases. Se usan caracteres y no una casilla
+#: porque el Treeview de Tkinter no tiene casillas de verificacion.
+MARK_YES = "Si"
+MARK_NO = "-"
+
+
+def _set_label(class_set):
+    """Como se ve un conjunto en el desplegable."""
+    return "%s (%d clases)" % (class_set.name, len(class_set))
 
 
 def scope_label(kind):
@@ -215,13 +230,16 @@ class Application(tk.Frame):
         self.notebook.pack(fill="both", expand=True, padx=8, pady=(8, 4))
 
         self.tab_gdb = ttk.Frame(self.notebook)
+        self.tab_what = ttk.Frame(self.notebook)
         self.tab_export = ttk.Frame(self.notebook)
         self.tab_sync = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_gdb, text=" 1 · Geodatabase ")
-        self.notebook.add(self.tab_export, text=" 2 · Exportar a QField ")
-        self.notebook.add(self.tab_sync, text=" 3 · Traer de campo ")
+        self.notebook.add(self.tab_what, text=" 2 · Que exportar ")
+        self.notebook.add(self.tab_export, text=" 3 · Exportar a QField ")
+        self.notebook.add(self.tab_sync, text=" 4 · Traer de campo ")
 
         self._build_gdb_tab()
+        self._build_what_tab()
         self._build_export_tab()
         self._build_sync_tab()
         self._build_console()
@@ -301,6 +319,223 @@ class Application(tk.Frame):
         scrollbar.pack(side="right", fill="y")
 
     # -- pestana 2 ------------------------------------------------------
+    def _build_what_tab(self):
+        """Que clases se llevan a campo.
+
+        Una brigada que sale a inventariar clientes no necesita las 47 clases
+        del modelo: el paquete abre lento y la leyenda se llena de capas que
+        nadie va a tocar. Aqui se elige el trabajo —los conjuntos tematicos del
+        perfil— y se afina a mano si hace falta.
+        """
+        frame = self.tab_what
+
+        top = ttk.LabelFrame(frame, text="Que trabajo se va a hacer en campo")
+        top.pack(fill="x", padx=8, pady=8)
+
+        ttk.Label(top, text="Conjunto:").grid(
+            row=0, column=0, sticky="w", padx=6, pady=6
+        )
+        self.var_class_set = tk.StringVar(value=SET_EVERYTHING)
+        self.combo_class_set = ttk.Combobox(
+            top,
+            textvariable=self.var_class_set,
+            values=[SET_EVERYTHING],
+            state="readonly",
+            width=42,
+        )
+        self.combo_class_set.grid(row=0, column=1, sticky="w", pady=6)
+        self.combo_class_set.bind("<<ComboboxSelected>>", self.on_class_set_changed)
+
+        self.label_set_hint = ttk.Label(top, text="")
+        self.label_set_hint.grid(row=1, column=1, columnspan=2, sticky="w")
+
+        self.var_follow_related = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            top,
+            text="Arrastrar tambien lo que cuelga de las clases elegidas",
+            variable=self.var_follow_related,
+            command=self.on_class_set_changed,
+        ).grid(row=2, column=1, columnspan=2, sticky="w", pady=(2, 8))
+        top.columnconfigure(2, weight=1)
+
+        listing = ttk.LabelFrame(
+            frame, text="Clases (doble clic para marcar o desmarcar)"
+        )
+        listing.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+
+        columns = ("marca", "geometria", "entidades", "motivo")
+        self.tree_classes = ttk.Treeview(
+            listing, columns=columns, show="tree headings", height=14
+        )
+        self.tree_classes.heading("#0", text="Clase")
+        self.tree_classes.heading("marca", text="Se exporta")
+        self.tree_classes.heading("geometria", text="Geometria")
+        self.tree_classes.heading("entidades", text="Entidades")
+        self.tree_classes.heading("motivo", text="Motivo")
+        self.tree_classes.column("#0", width=250)
+        self.tree_classes.column("marca", width=80, anchor="center")
+        self.tree_classes.column("geometria", width=90, anchor="center")
+        self.tree_classes.column("entidades", width=80, anchor="e")
+        self.tree_classes.column("motivo", width=240)
+        scrollbar = ttk.Scrollbar(listing, command=self.tree_classes.yview)
+        self.tree_classes.configure(yscrollcommand=scrollbar.set)
+        self.tree_classes.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self.tree_classes.bind("<Double-1>", self.on_toggle_class)
+        self.tree_classes.bind("<space>", self.on_toggle_class)
+
+        actions = ttk.Frame(frame)
+        actions.pack(fill="x", padx=8, pady=(0, 8))
+        ttk.Button(actions, text="Marcar todas", command=self.on_check_all).pack(
+            side="left"
+        )
+        ttk.Button(actions, text="Desmarcar todas", command=self.on_uncheck_all).pack(
+            side="left", padx=6
+        )
+        self.label_selection = ttk.Label(actions, text="")
+        self.label_selection.pack(side="left", padx=12)
+        ttk.Button(
+            actions,
+            text="Continuar",
+            command=lambda: self.notebook.select(self.tab_export),
+        ).pack(side="right")
+
+        #: ``{nombre_clase: bool}`` con lo que el usuario dejo marcado.
+        self.class_marks = {}
+        #: ``{nombre_clase: motivo}``, para que se vea por que entra o no.
+        self.class_reasons = {}
+        #: conjuntos disponibles en la geodatabase abierta
+        self.class_sets = []
+
+    # -- comportamiento de la pestana 2 ----------------------------------
+    def _fill_class_sets(self, info):
+        """Rellena los conjuntos que esta geodatabase puede ofrecer."""
+        resolver = SelectionResolver(info, load_profile(self.var_profile.get()))
+        self.class_sets = resolver.available_sets()
+        labels = [_set_label(item) for item in self.class_sets]
+        self.combo_class_set["values"] = labels
+        if labels:
+            self.var_class_set.set(labels[0])
+        self.on_class_set_changed()
+
+    def _set_id(self):
+        """Identificador del conjunto elegido en el desplegable."""
+        label = self.var_class_set.get()
+        for item in getattr(self, "class_sets", []):
+            if _set_label(item) == label:
+                return item.id
+        return SET_ALL_ID
+
+    def on_class_set_changed(self, event=None):
+        """Recalcula el marcado a partir del conjunto elegido."""
+        if self.workspace_info is None:
+            return
+        identifier = self._set_id()
+        chosen = None
+        for item in getattr(self, "class_sets", []):
+            if item.id == identifier:
+                chosen = item
+                break
+        self.label_set_hint.configure(
+            text=(chosen.description if chosen is not None else "") or ""
+        )
+
+        selection = Selection(
+            sets=[identifier],
+            include_related=self.var_follow_related.get(),
+        )
+        plan = SelectionResolver(
+            self.workspace_info, load_profile(self.var_profile.get())
+        ).resolve(selection)
+        self.class_marks = {}
+        self.class_reasons = {}
+        for layer in self.workspace_info.layers:
+            keep = identifier == SET_ALL_ID or plan.keeps(layer.name)
+            self.class_marks[layer.name] = keep
+            self.class_reasons[layer.name] = (
+                plan.included.get(layer.name)
+                or plan.excluded.get(layer.name)
+                or ("Toda la geodatabase" if keep else "")
+            )
+        self._refresh_class_list()
+
+    def _refresh_class_list(self):
+        """Vuelve a dibujar la lista con el marcado actual."""
+        self.tree_classes.delete(*self.tree_classes.get_children())
+        profile = load_profile(self.var_profile.get())
+        groups = {}
+        for layer in sorted(
+            self.workspace_info.layers, key=lambda item: item.name.lower()
+        ):
+            group_name = profile.group_of(layer.name) or "Otras clases"
+            if group_name not in groups:
+                groups[group_name] = self.tree_classes.insert(
+                    "", "end", text=group_name, open=True, values=("", "", "", "")
+                )
+            marked = self.class_marks.get(layer.name, True)
+            self.tree_classes.insert(
+                groups[group_name],
+                "end",
+                iid=layer.name,
+                text=layer.name,
+                values=(
+                    MARK_YES if marked else MARK_NO,
+                    layer.geometry_type or "tabla",
+                    layer.feature_count if layer.feature_count is not None else "",
+                    self.class_reasons.get(layer.name, ""),
+                ),
+            )
+        self._update_selection_label()
+
+    def _update_selection_label(self):
+        total = len(self.class_marks)
+        marked = len([name for name in self.class_marks if self.class_marks[name]])
+        self.label_selection.configure(
+            text="Se exportaran %d de %d clases." % (marked, total)
+        )
+
+    def on_toggle_class(self, event=None):
+        """Marca o desmarca la clase seleccionada."""
+        for item in self.tree_classes.selection():
+            if item not in self.class_marks:
+                continue  # es un grupo, no una clase
+            self.class_marks[item] = not self.class_marks[item]
+            self.class_reasons[item] = (
+                "Marcada a mano" if self.class_marks[item] else "Quitada a mano"
+            )
+            self.tree_classes.set(
+                item, "marca", MARK_YES if self.class_marks[item] else MARK_NO
+            )
+            self.tree_classes.set(item, "motivo", self.class_reasons[item])
+        self._update_selection_label()
+
+    def on_check_all(self):
+        self._set_all_marks(True)
+
+    def on_uncheck_all(self):
+        self._set_all_marks(False)
+
+    def _set_all_marks(self, value):
+        for name in self.class_marks:
+            self.class_marks[name] = value
+            self.class_reasons[name] = "Marcada a mano" if value else "Quitada a mano"
+        self._refresh_class_list()
+
+    def _build_selection(self):
+        """Traduce el marcado de la lista en una seleccion.
+
+        Se envia la lista explicita de clases marcadas y se desactiva el
+        arrastre: lo que el usuario ve marcado es exactamente lo que va a
+        recibir, sin sorpresas al empaquetar.
+        """
+        if not self.class_marks:
+            return Selection()
+        marked = [name for name in self.class_marks if self.class_marks[name]]
+        if len(marked) == len(self.class_marks):
+            return Selection()
+        return Selection(classes=marked, include_related=False)
+
+    # -- pestana 3 ------------------------------------------------------
     def _build_export_tab(self):
         frame = self.tab_export
 
@@ -457,7 +692,7 @@ class Application(tk.Frame):
         symbology.columnconfigure(2, weight=1)
         self.on_symbology_changed()
 
-    # -- pestana 3 ------------------------------------------------------
+    # -- pestana 4 ------------------------------------------------------
     def _build_sync_tab(self):
         frame = self.tab_sync
 
@@ -679,6 +914,7 @@ class Application(tk.Frame):
             self.workspace_info = info
             self._fill_tree(info)
             self._fill_polygon_layers(info)
+            self._fill_class_sets(info)
             self._log("")
             self._log(
                 "Geodatabase: %s (%s) - %d clases, %d dominios, %d relaciones"
@@ -699,7 +935,7 @@ class Application(tk.Frame):
                     "antes de exportar.",
                 )
             self.on_scope_changed()
-            self.notebook.select(self.tab_export)
+            self.notebook.select(self.tab_what)
 
         self._run_task(work, done)
 
@@ -819,6 +1055,7 @@ class Application(tk.Frame):
             project_name=self.var_project.get().strip() or "qfield_proyecto",
             profile=self.var_profile.get(),
             scope=self._build_scope(),
+            selection=self._build_selection(),
             symbology_source=self._symbology_source(),
             style_file=self.var_style_file.get().strip(),
         )
@@ -936,6 +1173,9 @@ class Application(tk.Frame):
 
         def done(result):
             self._log("")
+            if result.selection_description:
+                self._log(result.selection_description)
+                self._log("")
             if result.scope_description:
                 self._log(result.scope_description)
             for name in sorted(result.layer_counts):

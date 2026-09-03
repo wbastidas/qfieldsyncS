@@ -231,7 +231,32 @@ Detalles que importan en producción:
   Alimentador`, `Numero Estacion` y `Subestacion` cambian en cada Unidad de
   Negocio.
 
-### 5.4 La simbología
+### 5.4 Qué clases viajan
+
+El ámbito responde "qué trozo de la red"; esta pieza responde "qué clases", que
+es una pregunta distinta y tan necesaria como aquella. Se combinan: *los
+clientes **del** alimentador 04BH070T11*.
+
+La decisión de diseño está en **dónde vive el conocimiento**. Que
+`CONEXIONCONSUMIDOR` sea cosa de clientes y no de la red no lo sabe la
+geodatabase: lo sabe el modelo. Por eso los conjuntos temáticos se declaran en
+el perfil (`class_sets`, generados junto al resto desde el catálogo) y no se
+deducen en caliente. Lo que sí sale de la geodatabase son los conjuntos por
+geometría —solo puntos, solo líneas, solo tablas—, que valen para cualquier
+modelo, incluido uno que no sea el de CNEL EP.
+
+Dos detalles que hacen la diferencia entre una opción usable y una que genera
+llamadas de teléfono:
+
+- **Los conjuntos vacíos no se ofrecen.** Ofrecer "solo alumbrado" en una
+  geodatabase sin luminarias solo produce un paquete vacío.
+- **Se arrastra lo que cuelga de lo elegido**, siguiendo las *relationship
+  classes* y de forma transitiva. Un poste sin sus estructuras montadas no
+  sirve para revisarlo en campo. Pero lo que el usuario desmarca a mano no
+  vuelve a entrar por el arrastre: lo que se ve marcado es lo que se recibe, y
+  esa previsibilidad vale más que la comodidad de rellenar huecos.
+
+### 5.5 La simbología
 
 Es el punto donde más se nota que ArcGIS y QField no guardan las cosas en el
 mismo sitio. **ArcGIS no guarda la simbología en la geodatabase**: vive en el
@@ -294,7 +319,7 @@ renderizador clasifica por un campo que no se exportó, se degrada a símbolo
 único conservando el color; si una etiqueta usa un campo que no viaja, se
 desactiva. Las dos cosas con aviso: degradar en silencio sería peor que fallar.
 
-### 5.5 Verificación previa
+### 5.6 Verificación previa
 
 `core/checker.py` revisa antes de generar: colisiones de nombre de tabla, clases
 sin sistema de referencia, campos que chocan con columnas reservadas del
@@ -303,7 +328,7 @@ que cambia si la clase se comprime), dominios que dependen del subtipo, capas
 demasiado grandes para un teléfono y desviaciones entre el esquema real y el
 catálogo del perfil.
 
-### 5.6 La vuelta
+### 5.7 La vuelta
 
 El empaquetador guarda dentro del propio GeoPackage una tabla **`qfe_baseline`**
 con la huella (`md5` de los campos reescribibles + la geometría normalizada) de
@@ -326,7 +351,7 @@ Toda la escritura ocurre dentro de una **sesión de edición de arcpy**
 (`arcpy.da.Editor`), obligatoria en SDE versionado y que además permite revertir
 el lote completo si algo falla a mitad.
 
-### 5.7 QFieldCloud
+### 5.8 QFieldCloud
 
 `core/cloudapi.py` habla con QFieldCloud sobre `urllib`: login, proyectos,
 subida y bajada. Sin dependencias externas, porque instalar paquetes en el
@@ -343,7 +368,7 @@ Lo que de verdad cambia son dos cosas, y las dos importan.
 ### 6.1 Cómo se llama una clase
 
 Oracle guarda los nombres en mayúsculas y ArcSDE los califica con el usuario
-propietario: `EstructuraSoporte` llega como `GYE.ESTRUCTURASOPORTE`, y con otra
+propietario: `EstructuraSoporte` llega como `SIGELEC.ESTRUCTURASOPORTE`, y con otra
 conexión como `SDE.ESTRUCTURASOPORTE`. Es la misma clase con otra etiqueta.
 
 Si esa etiqueta se tratara como identidad, contra una base corporativa fallaría
@@ -385,7 +410,7 @@ dice con esas palabras.
 
 El recorte por área de interés aprovecha el índice espacial del servidor; los
 nombres calificados se normalizan al crear las tablas del paquete (en el
-dispositivo nadie quiere ver `GYE.ESTRUCTURASOPORTE`); las listas del ámbito se
+dispositivo nadie quiere ver `SIGELEC.ESTRUCTURASOPORTE`); las listas del ámbito se
 trocean en bloques de 900 porque el `IN` de Oracle corta en 1000; y una clase
 ilegible por permisos no tumba el análisis completo.
 
@@ -419,7 +444,7 @@ los campos por heurística de nombre.
 
 ## 9. Verificación
 
-316 pruebas que se ejecutan **sin ArcGIS instalado**, sobre una geodatabase de
+352 pruebas que se ejecutan **sin ArcGIS instalado**, sobre una geodatabase de
 demostración en memoria que reproduce un fragmento real del modelo (poste, tramo
 MT con subtipos, puesto de transformación con sus transformadores y la tabla de
 alimentador cabecera con tres alimentadores repartidos en tres subestaciones):
@@ -460,8 +485,8 @@ proporciona.
 Oficina                              Campo                    Oficina
 ───────                              ─────                    ───────
 1 Abrir y analizar la geodatabase
-2 Preparar la simbología
-  (o dejar la automática)
+2 Elegir qué clases se llevan
+  y preparar la simbología
 3 Elegir ámbito y exportar   ─────►  QField (sin cobertura)
   (o publicar en QFieldCloud)          captura y edición
                                             │

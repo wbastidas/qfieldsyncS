@@ -235,7 +235,7 @@ class LayerInfo(object):
     # -- consultas de conveniencia -------------------------------------
     @property
     def short_name(self):
-        """Nombre sin el esquema: ``GYE.BARRA`` -> ``BARRA``."""
+        """Nombre sin el esquema: ``SIGELEC.BARRA`` -> ``BARRA``."""
         return short_name(self.name)
 
     @property
@@ -329,7 +329,7 @@ class WorkspaceInfo(object):
         """La capa que se llama asi, venga o no calificada por el esquema.
 
         En una geodatabase corporativa la misma clase puede llegar como
-        ``Barra``, ``GYE.BARRA`` o ``SDE.BARRA`` segun con que usuario se
+        ``Barra``, ``SIGELEC.BARRA`` o ``SDE.BARRA`` segun con que usuario se
         conecte; buscar solo por el nombre literal dejaria el paquete sin
         sincronizar por un detalle del servidor.
         """

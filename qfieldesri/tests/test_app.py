@@ -143,6 +143,36 @@ class LabelsTest(unittest.TestCase):
         self.assertIsNone(app.scope_kind_from_label(app.SCOPE_ALL))
         self.assertIsNone(app.scope_kind_from_label(""))
 
+    def test_la_ventana_declara_la_pestana_de_que_exportar(self):
+        """La eleccion de clases es un paso propio, no una casilla escondida."""
+        self.assertTrue(hasattr(app.Application, "_build_what_tab"))
+        self.assertTrue(hasattr(app.Application, "on_class_set_changed"))
+        self.assertTrue(hasattr(app.Application, "on_toggle_class"))
+        self.assertTrue(hasattr(app.Application, "_build_selection"))
+
+    def test_lo_marcado_a_mano_es_exactamente_lo_que_se_exporta(self):
+        """Sin arrastres a ultima hora: lo que se ve marcado es lo que va."""
+        from qfieldesri.demo import build_reader
+
+        window = app.Application.__new__(app.Application)
+        window.class_marks = {
+            "EstructuraSoporte": True,
+            "TramoDistribucionAereo": False,
+            "PuestoTransfDistribucion": True,
+        }
+        selection = window._build_selection()
+        self.assertEqual(
+            sorted(selection.classes),
+            ["EstructuraSoporte", "PuestoTransfDistribucion"],
+        )
+        self.assertFalse(selection.include_related)
+        self.assertEqual(len(build_reader().workspace_info.layers), 5)
+
+    def test_si_esta_todo_marcado_no_se_acota_nada(self):
+        window = app.Application.__new__(app.Application)
+        window.class_marks = {"A": True, "B": True}
+        self.assertTrue(window._build_selection().is_empty)
+
     def test_los_modos_de_simbologia_son_de_archivo(self):
         """La ventana es un programa aparte: no ve el mapa abierto en ArcGIS.
 

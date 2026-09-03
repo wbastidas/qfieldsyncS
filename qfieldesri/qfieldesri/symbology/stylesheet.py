@@ -123,7 +123,7 @@ class StyleSheet(object):
         """Entrada del estilo que corresponde a esa clase.
 
         El estilo se escribe con el nombre corto de la clase (``Barra``); la
-        geodatabase corporativa la nombra ``GYE.BARRA``. Es la misma capa.
+        geodatabase corporativa la nombra ``SIGELEC.BARRA``. Es la misma capa.
         """
         key = self._lower.get((layer_name or "").lower())
         if key is None:

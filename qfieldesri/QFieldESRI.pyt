@@ -30,6 +30,10 @@ from qfieldesri.core.packager import (  # noqa: E402
     load_manifest,
 )
 from qfieldesri.core.scope import Scope, ScopeKind, ScopeResolver  # noqa: E402
+from qfieldesri.core.selection import (  # noqa: E402
+    Selection,
+    SelectionResolver,
+)
 from qfieldesri.core.synchronizer import ConflictPolicy, Synchronizer  # noqa: E402
 from qfieldesri.profiles import available_profiles, load_profile  # noqa: E402
 from qfieldesri.readers.arcpy_reader import ArcpyReader  # noqa: E402
@@ -47,6 +51,10 @@ SCOPE_ALL = "Toda la geodatabase"
 
 #: Separador entre el codigo y su descripcion en los desplegables de valores.
 _CODE_SEPARATOR = " - "
+
+
+#: Opcion "sin acotar" del desplegable de conjuntos tematicos.
+SET_EVERYTHING = "Toda la geodatabase"
 
 
 #: Opciones del desplegable "de donde sale la simbologia".
@@ -159,6 +167,46 @@ def _list_layer_names(workspace):
         )
     except Exception:  # noqa: BLE001
         return []
+    finally:
+        reader.close()
+
+
+def _class_sets(workspace, profile_name):
+    """Conjuntos tematicos que ofrece esta geodatabase, para el desplegable."""
+    try:
+        reader = _open_reader(workspace)
+    except Exception:  # noqa: BLE001 - workspace aun no valido en el dialogo
+        return []
+    try:
+        resolver = SelectionResolver(
+            reader.describe_workspace(), load_profile(profile_name)
+        )
+        return [
+            "%s (%d clases)" % (item.name, len(item))
+            for item in resolver.available_sets()
+        ]
+    except Exception:  # noqa: BLE001
+        return []
+    finally:
+        reader.close()
+
+
+def _set_id_from_label(label, workspace, profile_name):
+    """Del rotulo del desplegable al identificador del conjunto."""
+    if not label or label == SET_EVERYTHING:
+        return None
+    try:
+        reader = _open_reader(workspace)
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        resolver = SelectionResolver(
+            reader.describe_workspace(), load_profile(profile_name)
+        )
+        for item in resolver.available_sets():
+            if "%s (%d clases)" % (item.name, len(item)) == label:
+                return item.id
+        return None
     finally:
         reader.close()
 
@@ -594,8 +642,30 @@ class EmpaquetarParaQField(object):
         follow.value = True
 
         # --- seleccion fina de clases ---------------------------------
+        class_set = arcpy.Parameter(
+            displayName="Conjunto tematico a exportar",
+            name="class_set",
+            datatype="GPString",
+            parameterType="Optional",
+            direction="Input",
+            category="Clases y campos",
+        )
+        class_set.filter.type = "ValueList"
+        class_set.filter.list = [SET_EVERYTHING]
+        class_set.value = SET_EVERYTHING
+
+        follow_related = arcpy.Parameter(
+            displayName="Arrastrar lo que cuelga de las clases elegidas",
+            name="follow_related",
+            datatype="GPBoolean",
+            parameterType="Optional",
+            direction="Input",
+            category="Clases y campos",
+        )
+        follow_related.value = True
+
         layers = arcpy.Parameter(
-            displayName="Clases a incluir (vacio = todas)",
+            displayName="Clases a incluir (vacio = las del conjunto)",
             name="layers",
             datatype="GPString",
             parameterType="Optional",
@@ -681,6 +751,8 @@ class EmpaquetarParaQField(object):
             only_present,
             polygon,
             follow,
+            class_set,
+            follow_related,
             layers,
             read_only,
             filters,
@@ -708,6 +780,9 @@ class EmpaquetarParaQField(object):
             names = _list_layer_names(workspace)
             for key in ("layers", "read_only", "scope_present_in"):
                 values[key].filter.list = names
+            values["class_set"].filter.list = [SET_EVERYTHING] + _class_sets(
+                workspace, values["profile"].valueAsText
+            )
 
         _update_symbology_parameters(values)
 
@@ -760,6 +835,7 @@ class EmpaquetarParaQField(object):
             include_related_tables=bool(values["include_related"].value),
             big_domain_threshold=int(values["threshold"].value or 40),
             scope=self._scope(values),
+            selection=self._selection(values),
             symbology_source=_symbology_source(values),
             style_file=values["style_file"].valueAsText or "",
         )
@@ -798,6 +874,10 @@ class EmpaquetarParaQField(object):
             packaging = Packager(reader, config, progress=_progress).run()
 
             arcpy.AddMessage("")
+            if packaging.selection_description:
+                for line in packaging.selection_description.splitlines():
+                    arcpy.AddMessage(line)
+                arcpy.AddMessage("")
             if packaging.scope_description:
                 for line in packaging.scope_description.splitlines():
                     arcpy.AddMessage(line)
@@ -834,6 +914,19 @@ class EmpaquetarParaQField(object):
         finally:
             reader.close()
             arcpy.ResetProgressor()
+
+    def _selection(self, values):
+        """Que clases se llevan: el conjunto elegido mas lo marcado a mano."""
+        workspace = values["workspace"].valueAsText
+        identifier = _set_id_from_label(
+            values["class_set"].valueAsText, workspace, values["profile"].valueAsText
+        )
+        classes = _multi(values["layers"])
+        return Selection(
+            sets=[identifier] if identifier else [],
+            classes=classes,
+            include_related=bool(values["follow_related"].value),
+        )
 
     def _scope(self, values):
         """Traduce lo elegido en el dialogo a un ambito de exportacion."""

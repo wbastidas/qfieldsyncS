@@ -262,6 +262,145 @@ def parse_relationships(path):
     return relationships
 
 
+#: Conjuntos tematicos del modelo electrico. Cada uno responde a un trabajo de
+#: campo concreto; lo que cuelga de estas clases se arrastra por relacion.
+CLASS_SETS = [
+    {
+        "id": "clientes",
+        "name": "Clientes y consumo",
+        "description": "Puntos de carga y lo que se registra de cada consumidor.",
+        "classes": ["PuntoCarga", "CONEXIONCONSUMIDOR", "ATRIBUTOSCONSUMIDOR"],
+    },
+    {
+        "id": "postes",
+        "name": "Postes y lo que llevan encima",
+        "description": (
+            "Estructuras de soporte con sus estructuras montadas, "
+            "instituciones, operadoras y tensores."
+        ),
+        "classes": [
+            "EstructuraSoporte",
+            "EstructuraANivel",
+            "ESTRUCTURAENPOSTE",
+            "INSTITUCIONENPOSTE",
+            "OPERADORAENPOSTE",
+            "Tensor",
+            "CATALOGOESTRUCTURA",
+        ],
+    },
+    {
+        "id": "alumbrado",
+        "name": "Alumbrado publico",
+        "description": "Luminarias y semaforos.",
+        "classes": ["Luminaria", "UNIDADLUMINARIA", "Semaforo"],
+    },
+    {
+        "id": "transformadores",
+        "name": "Transformadores",
+        "description": "Puestos de transformacion de distribucion y de potencia.",
+        "classes": [
+            "PuestoTransfDistribucion",
+            "UNIDADTRANSFDISTRIBUCION",
+            "PuestoTransfPotencia",
+            "UNIDADTRANSFPOTENCIA",
+        ],
+    },
+    {
+        "id": "protecciones",
+        "name": "Protecciones y maniobra",
+        "description": (
+            "Seccionadores, fusibles, proteccion dinamica, reguladores, "
+            "capacitores, pararrayos y puntos de apertura."
+        ),
+        "classes": [
+            "PuestoSeccionador",
+            "PuestoSeccionadorFusible",
+            "PuestoProteccionDinamico",
+            "PuestoProteccionBajaTension",
+            "PuestoReguladorTension",
+            "PuestoCorrectorFactorPotencia",
+            "Pararrayos",
+            "PuntoApertura",
+        ],
+    },
+    {
+        "id": "red_mt",
+        "name": "Red de media tension",
+        "description": "Tramos de distribucion, aereos y subterraneos, y su maniobra.",
+        "classes": [
+            "TramoDistribucionAereo",
+            "TramoDistribucionSubterraneo",
+            "PuntoApertura",
+            "PuestoSeccionador",
+            "PuestoSeccionadorFusible",
+            "PuestoProteccionDinamico",
+        ],
+    },
+    {
+        "id": "red_bt",
+        "name": "Red de baja tension",
+        "description": "Tramos de baja tension, su proteccion y los puntos de carga.",
+        "classes": [
+            "TramoBajaTensionAereo",
+            "TramoBajaTensionSubterraneo",
+            "PuestoProteccionBajaTension",
+            "PuntoCarga",
+        ],
+    },
+    {
+        "id": "subtransmision",
+        "name": "Subtransmision",
+        "classes": [
+            "TramoSubtransmisionAereo",
+            "TramoSubtransmisionSubterraneo",
+        ],
+    },
+    {
+        "id": "subestaciones",
+        "name": "Subestaciones y generacion",
+        "description": "Subestaciones, barras, transformadores de potencia y generadores.",
+        "classes": [
+            "Subestacion",
+            "Barra",
+            "PuestoTransfPotencia",
+            "CIRCUITOFUENTE",
+            "Generador",
+            "GeneradorDistribuido",
+            "MOTORSINCRONO",
+            "MOTORINDUCCION",
+        ],
+    },
+    {
+        "id": "red_electrica",
+        "name": "Toda la red electrica",
+        "description": (
+            "Los tramos de todos los niveles de tension con sus puestos, "
+            "sin catalogos ni tablas auxiliares."
+        ),
+        "classes": [
+            "TramoSubtransmisionAereo",
+            "TramoSubtransmisionSubterraneo",
+            "TramoDistribucionAereo",
+            "TramoDistribucionSubterraneo",
+            "TramoBajaTensionAereo",
+            "TramoBajaTensionSubterraneo",
+            "Barra",
+            "EstructuraSoporte",
+            "PuestoTransfDistribucion",
+            "PuestoTransfPotencia",
+            "PuestoSeccionador",
+            "PuestoSeccionadorFusible",
+            "PuestoProteccionDinamico",
+            "PuestoProteccionBajaTension",
+            "PuestoReguladorTension",
+            "PuestoCorrectorFactorPotencia",
+            "PuntoApertura",
+            "Subestacion",
+        ],
+    },
+]
+
+
 def build():
     classes = {}
     for filename in CLASS_FILES:
@@ -340,6 +479,13 @@ def build():
                 "target_kind": "alimentador",
             }
         },
+        # --- conjuntos tematicos --------------------------------------
+        # Que clases se lleva cada tipo de trabajo de campo. No se deducen de
+        # la geodatabase: saber que CONEXIONCONSUMIDOR es cosa de clientes y
+        # no de la red es conocimiento del modelo. Las clases que dependen de
+        # las listadas se arrastran solas por las relationship classes, asi
+        # que aqui va la cabecera de cada tema, no el inventario completo.
+        "class_sets": CLASS_SETS,
         "classes": classes,
         "relationships": relationships,
     }

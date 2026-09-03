@@ -101,3 +101,28 @@ docker run --rm $(docker build --build-arg QGIS_TEST_VERSION=ltr -q -f .docker/D
 > ```shell
 > docker run --rm $(docker build --platform linux/amd64 --build-arg QGIS_TEST_VERSION=ltr -q -f .docker/Dockerfile .) .docker/xvfb-pytest
 > ```
+
+---
+
+## qfieldESRI (ArcGIS Desktop)
+
+This repository also hosts **[qfieldESRI](qfieldesri/)**, a standalone program
+that brings the same workflow to **ArcGIS Desktop** (ArcMap 10.x and ArcGIS
+Pro). It packages an ESRI **File Geodatabase** or **enterprise geodatabase
+(SDE)** into a QField project — translating domains, subtypes, relationship
+classes and field aliases into QField edit widgets, value maps and relations —
+and syncs field edits back into the geodatabase.
+
+Exports are scoped the way utility crews actually work: by **feeder**,
+**substation**, **sector polygon**, or province / canton / parish. Related
+*Unidad* tables that carry no feeder field are pulled along by their parent
+*Puesto*.
+
+It is not a QGIS plugin and does not depend on QGIS or Qt: the QField project
+file is written directly with the standard library, and the desktop window uses
+Tkinter, which ships with the Python that ArcGIS installs. A test walks the
+whole source tree and fails on any `qgis`, `PyQt` or undeclared import.
+
+- [qfieldesri/README.md](qfieldesri/README.md) — installation and usage (Spanish)
+- [qfieldesri/ANALISIS.md](qfieldesri/ANALISIS.md) — design decisions and what
+  was deliberately left out
